@@ -18,16 +18,23 @@ app.get("/", (req, res) => {
         <meta charset="UTF-8" />
         <title>F1 WebSocket Proxy</title>
         <style>
-          body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: center; margin-top: 10%; }
-          .status { font-size: 2em; margin-top: 20px; }
+          body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: start; margin-top: 10%; margin-left: 10%;}
+          .status { font-size: 1em; margin-top: 20px; color: #57de44; }
+          .description { font-size: 0.8em; margin-top: 30px; display: flex; gap: 10px; flex-direction:column;}
+          .link {text-decoration: none; color: #5c67ffff;}
         </style>
       </head>
       <body>
-        <h1>F1 WebSocket Proxy</h1>
-        <div class="status">WebSocket activo ✅</div>
-       </body>
+        <h1>F1 Websocket Proxy</h1>
+        <div class="status">WebSocket active</div>
+        <div class="description">
+        <div> This is a websocket connection for <a href="https://f1telemetry.vercel.app/" class="link" >F1 Telemetry<a/>, captures F1 signal and sends the data with no modifications to the client. </div>
+        <div> This websocket doesn't need authorization, if you found this websocket and want to get the information please consider to notify the owner in order to preserve de free hosting of render. </div>
+        <a href="https://cafecito.app/skoncito" class="link">@skoncito </a>
+        </div>
+        </body>
     </html>
-  `);;
+  `);
 });
 
 let frontendSockets = [];
@@ -36,8 +43,6 @@ let latestData = null;
 server.listen(PORT, () => {
   console.log("Servidor escuchando en puerto " + PORT);
 });
-
-
 
 // Conexion con F1
 async function negotiate() {
@@ -65,11 +70,10 @@ async function connectwss(token, cookie) {
     });
     sock.on("message", (data) => {
       console.log("Clients connected: %d", frontendSockets.length);
-  
-      
-      if (data.length > 5){
+
+      if (data.length > 5) {
         latestData = data;
-        console.log("Information exchange.")
+        console.log("Information exchange.");
       }
 
       frontendSockets.forEach((ws) => {
@@ -99,9 +103,6 @@ wss.on("connection", (ws) => {
 async function main() {
   try {
     const resp = await negotiate();
-
-    // console.log(resp.data);
-    // console.log(resp.headers);
 
     const sock = await connectwss(
       resp.data["ConnectionToken"],
