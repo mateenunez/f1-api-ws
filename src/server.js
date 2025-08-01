@@ -40,6 +40,7 @@ app.get("/", (req, res) => {
 let frontendSockets = [];
 
 let latestRetransmitionData = null;
+let latestData = null;
 
 server.listen(PORT, () => {
   console.log("Servidor escuchando en puerto " + PORT);
@@ -75,9 +76,15 @@ async function connectwss(token, cookie) {
     sock.on("message", (data) => {
       console.log("Clients connected: %d", frontendSockets.length);
 
+      // Guardar ultima información de streaming
+      if (data.length > 5){
+        latestData = data;
+        console.log("Streaming data received.");
+      }
+
       const parsedData = JSON.parse(data);
 
-      // Guardar ultima informacion de retransmision
+      // Guardar ultima información de retransmisión
       if (parsedData.R){
         latestRetransmitionData = data;
         console.log("Retransmission data received.");
@@ -106,6 +113,7 @@ wss.on("connection", (ws) => {
     frontendSockets = frontendSockets.filter((c) => c !== ws);
   });
 });
+
 
 async function main() {
   try {
