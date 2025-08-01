@@ -38,13 +38,14 @@ app.get("/", (req, res) => {
 });
 
 let frontendSockets = [];
-let latestData = null;
+
+let latestRetransmitionData = null;
 
 server.listen(PORT, () => {
   console.log("Servidor escuchando en puerto " + PORT);
 });
 
-// Conexion con F1
+// Negociación
 async function negotiate() {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const url = `https://livetiming.formula1.com/signalr/negotiate?connectionData=${hub}&clientProtocol=1.5`;
@@ -52,6 +53,7 @@ async function negotiate() {
   return resp;
 }
 
+// Conexión
 async function connectwss(token, cookie) {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const encodedToken = encodeURIComponent(token);
@@ -67,13 +69,18 @@ async function connectwss(token, cookie) {
 
     sock.on("open", (ev) => {
       res(sock);
+
     });
+    
     sock.on("message", (data) => {
       console.log("Clients connected: %d", frontendSockets.length);
 
-      if (data.length > 5) {
-        latestData = data;
-        console.log("Information exchange.");
+      const parsedData = JSON.parse(data);
+
+      // Guardar ultima informacion de retransmision
+      if (parsedData.R){
+        latestRetransmitionData = data;
+        console.log("Retransmission data received.");
       }
 
       frontendSockets.forEach((ws) => {
@@ -91,8 +98,8 @@ const wss = new ws.WebSocketServer({ server });
 wss.on("connection", (ws) => {
   frontendSockets.push(ws);
 
-  if (latestData != null) {
-    ws.send(latestData);
+  if (latestRetransmitionData != null) {
+    ws.send(latestRetransmitionData);
   }
 
   ws.on("close", () => {
