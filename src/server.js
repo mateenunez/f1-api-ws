@@ -38,13 +38,23 @@ app.get("/", (req, res) => {
 });
 
 let frontendSockets = [];
-
-let latestRetransmitionData = null;
-let latestData = null;
+var onConnectionData = null;
 
 server.listen(PORT, () => {
   console.log("Servidor escuchando en puerto " + PORT);
 });
+
+// Función para guardar los datos de streaming en la variable onConnectionData
+function deepMerge(target, source) {
+  for (const key in source) {
+    if (source[key] instanceof Object && !Array.isArray(source[key])) {
+      if (!target[key]) target[key] = {};
+      deepMerge(target[key], source[key]);
+    } else {
+      target[key] = source[key];
+    }
+  }
+}
 
 // Negociación
 async function negotiate() {
@@ -70,24 +80,39 @@ async function connectwss(token, cookie) {
 
     sock.on("open", (ev) => {
       res(sock);
-
     });
-    
+
     sock.on("message", (data) => {
       console.log("Clients connected: %d", frontendSockets.length);
 
-      // Guardar ultima información de streaming
-      if (data.length > 5){
-        latestData = data;
-        console.log("Streaming data received.");
+      // Guardar ultima información de retransmisión
+      const parsedData = JSON.parse(data);
+      if (parsedData.R) {
+        onConnectionData = data;
+        console.log("Saved on connection data.");
       }
 
-      const parsedData = JSON.parse(data);
+      // Guardar ultima información de streaming y actualizar estado de la variable
+      if (data.length > 5) {
+        if (!onConnectionData) {
+          return;
+        }
 
-      // Guardar ultima información de retransmisión
-      if (parsedData.R){
-        latestRetransmitionData = data;
-        console.log("Retransmission data received.");
+        // Actualizar el estado de la variable on connection data
+        if (Array.isArray(parsedData.M)) {
+          console.log("Streaming data received");
+          parsedData.M.forEach((update) => {
+            if (update.H === "Streaming" && update.M === "feed") {
+              const [feedName, data, timestamp] = update.A;
+
+              if (fullState.R[feedName]) {
+                deepMerge(fullState.R[feedName], data);
+              } else {
+                fullState.R[feedName] = data;
+              }
+            }
+          });
+        }
       }
 
       frontendSockets.forEach((ws) => {
@@ -105,15 +130,14 @@ const wss = new ws.WebSocketServer({ server });
 wss.on("connection", (ws) => {
   frontendSockets.push(ws);
 
-  if (latestRetransmitionData != null) {
-    ws.send(latestRetransmitionData);
+  if (onConnectionData != null) {
+    ws.send(onConnectionData);
   }
 
   ws.on("close", () => {
     frontendSockets = frontendSockets.filter((c) => c !== ws);
   });
 });
-
 
 async function main() {
   try {
