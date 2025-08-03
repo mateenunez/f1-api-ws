@@ -105,10 +105,105 @@ async function connectwss(token, cookie) {
             if (update.H === "Streaming" && update.M === "feed") {
               const [feedName, data, timestamp] = update.A;
 
-              if (fullState.R[feedName]) {
-                deepMerge(fullState.R[feedName], data);
-              } else {
-                fullState.R[feedName] = data;
+              if (!onConnectionData || !onConnectionData.R) {
+                return;
+              }
+
+              switch (feedName) {
+                case "Heartbeat":
+                  if (onConnectionData?.R?.Heartbeat) {
+                    deepMerge(onConnectionData.R.Heartbeat, data);
+                  }
+                  break;
+
+                case "CarData.z":
+                  if (onConnectionData?.R?.CarData) {
+                    deepMerge(onConnectionData.R.CarData, data);
+                  }
+                  break;
+
+                case "Position.z":
+                  if (onConnectionData?.R?.Position) {
+                    deepMerge(onConnectionData.R.Position, data);
+                  }
+                  break;
+
+                case "TimingData":
+                  if (onConnectionData?.R?.TimingData) {
+                    deepMerge(onConnectionData.R.TimingData, data);
+                  }
+                  break;
+
+                case "TimingStats":
+                  if (onConnectionData?.R?.TimingStats) {
+                    deepMerge(onConnectionData.R.TimingStats, data);
+                  }
+                  break;
+
+                case "TimingAppData":
+                  if (onConnectionData?.R?.TimingAppData) {
+                    deepMerge(onConnectionData.R.TimingAppData, data);
+                  }
+                  break;
+
+                case "WeatherData":
+                  if (onConnectionData?.R?.WeatherData) {
+                    deepMerge(onConnectionData.R.WeatherData, data);
+                  }
+                  break;
+
+                case "TrackStatus":
+                  if (onConnectionData?.R?.TrackStatus) {
+                    deepMerge(onConnectionData.R.TrackStatus, data);
+                  }
+                  break;
+
+                case "DriverList":
+                  if (onConnectionData?.R?.DriverList) {
+                    deepMerge(onConnectionData.R.DriverList, data);
+                  }
+                  break;
+
+                case "RaceControlMessages":
+                  if (onConnectionData?.R?.RaceControlMessages) {
+                    deepMerge(onConnectionData.R.RaceControlMessages, data);
+                  }
+                  break;
+
+                case "SessionInfo":
+                  if (onConnectionData?.R?.SessionInfo) {
+                    deepMerge(onConnectionData.R.SessionInfo, data);
+                  }
+                  break;
+
+                case "SessionData":
+                  if (onConnectionData?.R?.SessionData) {
+                    deepMerge(onConnectionData.R.SessionData, data);
+                  }
+                  break;
+
+                case "ExtrapolatedClock":
+                  if (onConnectionData?.R?.ExtrapolatedClock) {
+                    deepMerge(onConnectionData.R.ExtrapolatedClock, data);
+                  }
+                  break;
+
+                case "TyreStintSeries":
+                  if (onConnectionData?.R?.TyreStintSeries) {
+                    deepMerge(onConnectionData.R.TyreStintSeries, data);
+                  }
+                  break;
+
+                case "TopThree":
+                  if (onConnectionData?.R?.TopThree) {
+                    deepMerge(onConnectionData.R.TopThree, data);
+                  }
+                  break;
+
+                default:
+                  console.warn(
+                    `Feed "${feedName}" no reconocido o propiedad no definida.`
+                  );
               }
             }
           });
