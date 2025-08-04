@@ -84,7 +84,7 @@ async function connectwss(token, cookie) {
 
     sock.on("message", (data) => {
       console.log("Clients connected: %d", frontendSockets.length);
-
+      console.log(data)
       // Guardar ultima información de retransmisión
       const parsedData = JSON.parse(data);
       if (parsedData.R) {
@@ -226,7 +226,8 @@ wss.on("connection", (ws) => {
   frontendSockets.push(ws);
 
   if (fullState != null) {
-    ws.send(JSON.stringify(fullState));
+    const buffer = Buffer.from(JSON.stringify(fullState));
+    ws.send(buffer);
   }
 
   ws.on("close", () => {
