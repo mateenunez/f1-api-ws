@@ -38,13 +38,13 @@ app.get("/", (req, res) => {
 });
 
 let frontendSockets = [];
-var onConnectionData = null;
+var fullState = null;
 
 server.listen(PORT, () => {
   console.log("Servidor escuchando en puerto " + PORT);
 });
 
-// Función para guardar los datos de streaming en la variable onConnectionData
+// Función para guardar los datos de streaming en la variable fullState
 function deepMerge(target, source) {
   for (const key in source) {
     if (source[key] instanceof Object && !Array.isArray(source[key])) {
@@ -88,13 +88,13 @@ async function connectwss(token, cookie) {
       // Guardar ultima información de retransmisión
       const parsedData = JSON.parse(data);
       if (parsedData.R) {
-        onConnectionData = data;
+        fullState = parsedData;
         console.log("Saved on connection data.");
       }
 
       // Guardar ultima información de streaming y actualizar estado de la variable
       if (data.length > 5) {
-        if (!onConnectionData) {
+        if (!fullState) {
           return;
         }
 
@@ -105,98 +105,98 @@ async function connectwss(token, cookie) {
             if (update.H === "Streaming" && update.M === "feed") {
               const [feedName, data, timestamp] = update.A;
 
-              if (!onConnectionData || !onConnectionData.R) {
+              if (!fullState || !fullState.R) {
                 return;
               }
 
               switch (feedName) {
                 case "Heartbeat":
-                  if (onConnectionData?.R?.Heartbeat) {
-                    deepMerge(onConnectionData.R.Heartbeat, data);
+                  if (fullState?.R?.Heartbeat) {
+                    deepMerge(fullState.R.Heartbeat, data);
                   }
                   break;
 
                 case "CarData.z":
-                  if (onConnectionData?.R?.CarData) {
-                    deepMerge(onConnectionData.R.CarData, data);
+                  if (fullState?.R?.CarData) {
+                    deepMerge(fullState.R.CarData, data);
                   }
                   break;
 
                 case "Position.z":
-                  if (onConnectionData?.R?.Position) {
-                    deepMerge(onConnectionData.R.Position, data);
+                  if (fullState?.R?.Position) {
+                    deepMerge(fullState.R.Position, data);
                   }
                   break;
 
                 case "TimingData":
-                  if (onConnectionData?.R?.TimingData) {
-                    deepMerge(onConnectionData.R.TimingData, data);
+                  if (fullState?.R?.TimingData) {
+                    deepMerge(fullState.R.TimingData, data);
                   }
                   break;
 
                 case "TimingStats":
-                  if (onConnectionData?.R?.TimingStats) {
-                    deepMerge(onConnectionData.R.TimingStats, data);
+                  if (fullState?.R?.TimingStats) {
+                    deepMerge(fullState.R.TimingStats, data);
                   }
                   break;
 
                 case "TimingAppData":
-                  if (onConnectionData?.R?.TimingAppData) {
-                    deepMerge(onConnectionData.R.TimingAppData, data);
+                  if (fullState?.R?.TimingAppData) {
+                    deepMerge(fullState.R.TimingAppData, data);
                   }
                   break;
 
                 case "WeatherData":
-                  if (onConnectionData?.R?.WeatherData) {
-                    deepMerge(onConnectionData.R.WeatherData, data);
+                  if (fullState?.R?.WeatherData) {
+                    deepMerge(fullState.R.WeatherData, data);
                   }
                   break;
 
                 case "TrackStatus":
-                  if (onConnectionData?.R?.TrackStatus) {
-                    deepMerge(onConnectionData.R.TrackStatus, data);
+                  if (fullState?.R?.TrackStatus) {
+                    deepMerge(fullState.R.TrackStatus, data);
                   }
                   break;
 
                 case "DriverList":
-                  if (onConnectionData?.R?.DriverList) {
-                    deepMerge(onConnectionData.R.DriverList, data);
+                  if (fullState?.R?.DriverList) {
+                    deepMerge(fullState.R.DriverList, data);
                   }
                   break;
 
                 case "RaceControlMessages":
-                  if (onConnectionData?.R?.RaceControlMessages) {
-                    deepMerge(onConnectionData.R.RaceControlMessages, data);
+                  if (fullState?.R?.RaceControlMessages) {
+                    deepMerge(fullState.R.RaceControlMessages, data);
                   }
                   break;
 
                 case "SessionInfo":
-                  if (onConnectionData?.R?.SessionInfo) {
-                    deepMerge(onConnectionData.R.SessionInfo, data);
+                  if (fullState?.R?.SessionInfo) {
+                    deepMerge(fullState.R.SessionInfo, data);
                   }
                   break;
 
                 case "SessionData":
-                  if (onConnectionData?.R?.SessionData) {
-                    deepMerge(onConnectionData.R.SessionData, data);
+                  if (fullState?.R?.SessionData) {
+                    deepMerge(fullState.R.SessionData, data);
                   }
                   break;
 
                 case "ExtrapolatedClock":
-                  if (onConnectionData?.R?.ExtrapolatedClock) {
-                    deepMerge(onConnectionData.R.ExtrapolatedClock, data);
+                  if (fullState?.R?.ExtrapolatedClock) {
+                    deepMerge(fullState.R.ExtrapolatedClock, data);
                   }
                   break;
 
                 case "TyreStintSeries":
-                  if (onConnectionData?.R?.TyreStintSeries) {
-                    deepMerge(onConnectionData.R.TyreStintSeries, data);
+                  if (fullState?.R?.TyreStintSeries) {
+                    deepMerge(fullState.R.TyreStintSeries, data);
                   }
                   break;
 
                 case "TopThree":
-                  if (onConnectionData?.R?.TopThree) {
-                    deepMerge(onConnectionData.R.TopThree, data);
+                  if (fullState?.R?.TopThree) {
+                    deepMerge(fullState.R.TopThree, data);
                   }
                   break;
 
@@ -225,8 +225,8 @@ const wss = new ws.WebSocketServer({ server });
 wss.on("connection", (ws) => {
   frontendSockets.push(ws);
 
-  if (onConnectionData != null) {
-    ws.send(onConnectionData);
+  if (fullState != null) {
+    ws.send(JSON.stringify(fullState));
   }
 
   ws.on("close", () => {
