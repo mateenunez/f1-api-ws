@@ -3,6 +3,7 @@ const axios = require("axios");
 const ws = require("ws");
 const cors = require("cors");
 const http = require("http");
+const ical = require("ical");
 
 const app = express();
 const server = http.createServer(app);
@@ -35,6 +36,72 @@ app.get("/", (req, res) => {
         </body>
     </html>
   `);
+});
+
+app.get("/calendar", async (req, res) => {
+  try {
+    const calendarUrl = "https://ics.ecal.com/ecal-sub/689fc469915d6b00080fec00/Formula%201.ics";
+    
+    const response = await axios.get(calendarUrl);
+    const calendarData = response.data;
+    
+    const events = ical.parseICS(calendarData);
+    
+    const formattedEvents = [];
+    const now = new Date();
+    
+    for (let eventId in events) {
+      const event = events[eventId];
+      
+      if (event.start && event.start > now) {
+        formattedEvents.push({
+          id: eventId,
+          summary: event.summary || "Evento F1",
+          start: event.start,
+          end: event.end,
+          location: event.location || "",
+          status: event.status || "CONFIRMED"
+        });
+      }
+    }
+    
+    formattedEvents.sort((a, b) => a.start - b.start);
+    
+    const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
+    
+    let timeUntilNext = null;
+    if (nextEvent) {
+      const timeDiff = nextEvent.start - now;
+      const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+      const hours = Math.floor((timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60));
+      const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+      
+      timeUntilNext = {
+        days,
+        hours,
+        minutes,
+        totalMinutes: Math.floor(timeDiff / (1000 * 60)),
+        totalHours: Math.floor(timeDiff / (1000 * 60 * 60))
+      };
+    }
+    
+    res.json({
+      success: true,
+      nextEvent,
+      timeUntilNext,
+      totalEvents: formattedEvents.length,
+      upcomingEvents: formattedEvents.slice(0, 5), // Próximos 5 eventos
+      lastUpdated: new Date().toISOString()
+    });
+    
+  } catch (error) {
+    console.error("Error al obtener el calendario:", error);
+    res.status(500).json({
+      success: false,
+      error: "Error al obtener el calendario",
+      message: error.message
+    });
+  }
 });
 
 let frontendSockets = [];
