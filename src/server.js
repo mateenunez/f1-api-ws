@@ -9,6 +9,8 @@ const app = express();
 const server = http.createServer(app);
 const PORT = 4000;
 
+const RECONNECT_DELAY = 10000; 
+
 app.use(cors());
 
 app.get("/", (req, res) => {
@@ -249,6 +251,15 @@ async function connectwss(token, cookie) {
                 break;
 
               case "SessionInfo":
+                if (data.Meeting.SessionStatus === "Inactive") {
+                  sock.close(); 
+                  reconnectTimeout = setTimeout(() => {
+                    console.log("Attempting reconnect...");
+                    main();
+                  }, RECONNECT_DELAY);
+                  console.log("Session ended, fullState cleared.");
+                  break;
+                }
                 if (fullState?.R?.SessionInfo) {
                   deepMerge(fullState.R.SessionInfo, data);
                 }
