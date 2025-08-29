@@ -176,122 +176,115 @@ async function connectwss(token, cookie) {
         console.log("Saved on connection data.");
       }
 
-      // Guardar ultima información de streaming y actualizar estado de la variable
-      if (data.length > 5) {
-        if (!fullState) {
-          return;
-        }
+      // Actualizar el estado de la variable on connection data
+      if (Array.isArray(parsedData.M)) {
+        console.log("Streaming data received");
+        parsedData.M.forEach((update) => {
+          if (update.H === "Streaming" && update.M === "feed") {
+            const [feedName, data, timestamp] = update.A;
 
-        // Actualizar el estado de la variable on connection data
-        if (Array.isArray(parsedData.M)) {
-          console.log("Streaming data received");
-          parsedData.M.forEach((update) => {
-            if (update.H === "Streaming" && update.M === "feed") {
-              const [feedName, data, timestamp] = update.A;
-
-              if (!fullState || !fullState.R) {
-                return;
-              }
-
-              switch (feedName) {
-                case "Heartbeat":
-                  if (fullState?.R?.Heartbeat) {
-                    deepMerge(fullState.R.Heartbeat, data);
-                  }
-                  break;
-
-                case "CarData.z":
-                  if (fullState?.R?.CarData) {
-                    deepMerge(fullState.R.CarData, data);
-                  }
-                  break;
-
-                case "Position.z":
-                  if (fullState?.R?.Position) {
-                    deepMerge(fullState.R.Position, data);
-                  }
-                  break;
-
-                case "TimingData":
-                  if (fullState?.R?.TimingData) {
-                    deepMerge(fullState.R.TimingData, data);
-                  }
-                  break;
-
-                case "TimingStats":
-                  if (fullState?.R?.TimingStats) {
-                    deepMerge(fullState.R.TimingStats, data);
-                  }
-                  break;
-
-                case "TimingAppData":
-                  if (fullState?.R?.TimingAppData) {
-                    deepMerge(fullState.R.TimingAppData, data);
-                  }
-                  break;
-
-                case "WeatherData":
-                  if (fullState?.R?.WeatherData) {
-                    deepMerge(fullState.R.WeatherData, data);
-                  }
-                  break;
-
-                case "TrackStatus":
-                  if (fullState?.R?.TrackStatus) {
-                    deepMerge(fullState.R.TrackStatus, data);
-                  }
-                  break;
-
-                case "DriverList":
-                  if (fullState?.R?.DriverList) {
-                    deepMerge(fullState.R.DriverList, data);
-                  }
-                  break;
-
-                case "RaceControlMessages":
-                  if (fullState?.R?.RaceControlMessages) {
-                    deepMerge(fullState.R.RaceControlMessages, data);
-                  }
-                  break;
-
-                case "SessionInfo":
-                  if (fullState?.R?.SessionInfo) {
-                    deepMerge(fullState.R.SessionInfo, data);
-                  }
-                  break;
-
-                case "SessionData":
-                  if (fullState?.R?.SessionData) {
-                    deepMerge(fullState.R.SessionData, data);
-                  }
-                  break;
-
-                case "ExtrapolatedClock":
-                  if (fullState?.R?.ExtrapolatedClock) {
-                    deepMerge(fullState.R.ExtrapolatedClock, data);
-                  }
-                  break;
-
-                case "TyreStintSeries":
-                  if (fullState?.R?.TyreStintSeries) {
-                    deepMerge(fullState.R.TyreStintSeries, data);
-                  }
-                  break;
-
-                case "TopThree":
-                  if (fullState?.R?.TopThree) {
-                    deepMerge(fullState.R.TopThree, data);
-                  }
-                  break;
-
-                default:
-                  console.warn(
-                    `Feed "${feedName}" no reconocido o propiedad no definida.`
-                  );
-              }
+            if (!fullState || !fullState.R) {
+              return;
             }
-          });
-        }
+
+            switch (feedName) {
+              case "Heartbeat":
+                if (fullState?.R?.Heartbeat) {
+                  deepMerge(fullState.R.Heartbeat, data);
+                }
+                break;
+
+              case "CarData.z":
+                if (fullState?.R?.CarData) {
+                  deepMerge(fullState.R.CarData, data);
+                }
+                break;
+
+              case "Position.z":
+                if (fullState?.R?.Position) {
+                  deepMerge(fullState.R.Position, data);
+                }
+                break;
+
+              case "TimingData":
+                if (fullState?.R?.TimingData) {
+                  deepMerge(fullState.R.TimingData, data);
+                }
+                break;
+
+              case "TimingStats":
+                if (fullState?.R?.TimingStats) {
+                  deepMerge(fullState.R.TimingStats, data);
+                }
+                break;
+
+              case "TimingAppData":
+                if (fullState?.R?.TimingAppData) {
+                  deepMerge(fullState.R.TimingAppData, data);
+                }
+                break;
+
+              case "WeatherData":
+                if (fullState?.R?.WeatherData) {
+                  deepMerge(fullState.R.WeatherData, data);
+                }
+                break;
+
+              case "TrackStatus":
+                if (fullState?.R?.TrackStatus) {
+                  deepMerge(fullState.R.TrackStatus, data);
+                }
+                break;
+
+              case "DriverList":
+                if (fullState?.R?.DriverList) {
+                  deepMerge(fullState.R.DriverList, data);
+                }
+                break;
+
+              case "RaceControlMessages":
+                if (fullState?.R?.RaceControlMessages) {
+                  deepMerge(fullState.R.RaceControlMessages, data);
+                }
+                break;
+
+              case "SessionInfo":
+                if (fullState?.R?.SessionInfo) {
+                  deepMerge(fullState.R.SessionInfo, data);
+                }
+                break;
+
+              case "SessionData":
+                if (fullState?.R?.SessionData) {
+                  deepMerge(fullState.R.SessionData, data);
+                }
+                break;
+
+              case "ExtrapolatedClock":
+                if (fullState?.R?.ExtrapolatedClock) {
+                  deepMerge(fullState.R.ExtrapolatedClock, data);
+                }
+                break;
+
+              case "TyreStintSeries":
+                if (fullState?.R?.TyreStintSeries) {
+                  deepMerge(fullState.R.TyreStintSeries, data);
+                }
+                break;
+
+              case "TopThree":
+                if (fullState?.R?.TopThree) {
+                  deepMerge(fullState.R.TopThree, data);
+                }
+                break;
+
+              default:
+                console.warn(
+                  `Feed "${feedName}" no reconocido o propiedad no definida.`
+                );
+            }
+          }
+        });
       }
 
       frontendSockets.forEach((ws) => {
