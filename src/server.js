@@ -133,8 +133,12 @@ server.listen(PORT, () => {
 // Función para guardar los datos de streaming en la variable fullState
 function deepMerge(target, source) {
   for (const key in source) {
-    if (source[key] instanceof Object && !Array.isArray(source[key])) {
-      if (!target[key]) target[key] = {};
+    if (Array.isArray(source[key])) {
+      target[key] = source[key];
+    } else if (source[key] instanceof Object && source[key] !== null) {
+      if (!target[key] || typeof target[key] !== 'object') {
+        target[key] = {};
+      }
       deepMerge(target[key], source[key]);
     } else {
       target[key] = source[key];
@@ -251,15 +255,6 @@ async function connectwss(token, cookie) {
                 break;
 
               case "SessionInfo":
-                if (data.Meeting.SessionStatus === "Inactive") {
-                  sock.close(); 
-                  reconnectTimeout = setTimeout(() => {
-                    console.log("Attempting reconnect...");
-                    main();
-                  }, RECONNECT_DELAY);
-                  console.log("Session ended, fullState cleared.");
-                  break;
-                }
                 if (fullState?.R?.SessionInfo) {
                   deepMerge(fullState.R.SessionInfo, data);
                 }
