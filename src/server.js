@@ -9,8 +9,6 @@ const app = express();
 const server = http.createServer(app);
 const PORT = 4000;
 
-const RECONNECT_DELAY = 10000; 
-
 app.use(cors());
 
 app.get("/", (req, res) => {
@@ -136,7 +134,7 @@ function deepMerge(target, source) {
     if (Array.isArray(source[key])) {
       target[key] = source[key];
     } else if (source[key] instanceof Object && source[key] !== null) {
-      if (!target[key] || typeof target[key] !== 'object') {
+      if (!target[key] || typeof target[key] !== "object") {
         target[key] = {};
       }
       deepMerge(target[key], source[key]);
@@ -334,8 +332,6 @@ async function main() {
         A: [
           [
             "Heartbeat",
-            "CarData.z",
-            "Position.z",
             "CarData",
             "Position",
             "ExtrapolatedClock",
@@ -350,9 +346,10 @@ async function main() {
             "SessionData",
             "LapCount",
             "TimingData",
-            "ChampionshipPrediction",
             "TyreStintSeries",
-            "PitStopSeries",
+            "TeamRadio",
+            "CarData.z",
+            "Position.z",
           ],
         ],
         I: 1,
