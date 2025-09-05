@@ -132,6 +132,7 @@ server.listen(PORT, () => {
 function deepMerge(target, source) {
   for (const key in source) {
     if (Array.isArray(source[key])) {
+      console.log("Array replaced at key:", key);
       target[key] = source[key];
     } else if (source[key] instanceof Object && source[key] !== null) {
       if (!target[key] || typeof target[key] !== "object") {
@@ -324,7 +325,6 @@ async function main() {
       resp.data["ConnectionToken"],
       resp.headers["set-cookie"]
     );
-
     sock.send(
       JSON.stringify({
         H: "Streaming",
