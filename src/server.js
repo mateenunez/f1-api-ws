@@ -4,6 +4,8 @@ const ws = require("ws");
 const cors = require("cors");
 const http = require("http");
 const ical = require("ical");
+const signalR = require("@microsoft/signalr");
+require("dotenv").config();
 
 const app = express();
 const server = http.createServer(app);
@@ -122,10 +124,10 @@ app.get("/calendar", async (req, res) => {
 });
 
 let frontendSockets = [];
-var fullState = null;
+var fullState = { R: {} };
 
 server.listen(PORT, () => {
-  console.log("Servidor escuchando en puerto " + PORT);
+  console.log("Server listening in port: " + PORT);
 });
 
 // Función para guardar los datos de streaming en la variable fullState
@@ -145,7 +147,7 @@ function deepMerge(target, source) {
   }
 }
 
-// Negociación
+// Negociación sin F1TV Premium
 async function negotiate() {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const url = `https://livetiming.formula1.com/signalr/negotiate?connectionData=${hub}&clientProtocol=1.5`;
@@ -153,7 +155,7 @@ async function negotiate() {
   return resp;
 }
 
-// Conexión
+// Conexión vieja sin F1TV Premium
 async function connectwss(token, cookie) {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const encodedToken = encodeURIComponent(token);
@@ -172,18 +174,16 @@ async function connectwss(token, cookie) {
     });
 
     sock.on("message", (data) => {
-      console.log("Clients connected: %d", frontendSockets.length);
-      console.log(data);
       // Guardar ultima información de retransmisión
       const parsedData = JSON.parse(data);
       if (parsedData.R) {
         fullState = parsedData;
-        console.log("Saved on connection data.");
+        console.log("Basic data subscription fullfilled");
       }
 
       // Actualizar el estado de la variable on connection data
       if (Array.isArray(parsedData.M)) {
-        console.log("Streaming data received");
+        console.log("Basic streaming data received");
         parsedData.M.forEach((update) => {
           if (update.H === "Streaming" && update.M === "feed") {
             const [feedName, data, timestamp] = update.A;
@@ -302,10 +302,210 @@ async function connectwss(token, cookie) {
   return p;
 }
 
+// Negociación con F1TV Premium
+async function negotiatePremium(subscriptionToken) {
+  try {
+    const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
+    const url = `https://livetiming.formula1.com/signalrcore/negotiate?connectionData=${hub}&clientProtocol=1.5`;
+    const headers = {
+      Authorization: `Bearer ${subscriptionToken}`,
+      "User-Agent":
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+      Accept: "application/json, text/plain, */*",
+      "Accept-Encoding": "gzip, deflate, br",
+      Origin: "https://account.formula1.com",
+      Referer: "https://account.formula1.com/",
+      "Content-Type": "application/json",
+    };
+    const response = await axios.post(url, null, { headers });
+    return response;
+  } catch (error) {
+    console.log(
+      "Error during negotiation:",
+      error.response?.data || error.message
+    );
+  }
+}
+
+// Conexión nueva con F1TV Premium
+async function connectWithSignalRPremium(subscriptionToken, cookies) {
+  const cookieString = cookies
+    .map((cookie) => cookie.split(";")[0].trim())
+    .join("; ");
+  const connection = new signalR.HubConnectionBuilder()
+    .withUrl("https://livetiming.formula1.com/signalrcore", {
+      transport: signalR.HttpTransportType.WebSockets,
+      accessTokenFactory: () => subscriptionToken,
+      headers: {
+        Cookie: cookieString,
+        "User-Agent": "BestHTTP",
+        "Accept-Encoding": "gzip,identity",
+      },
+    })
+    .configureLogging(signalR.LogLevel.Information)
+    .build();
+
+  connection.on("feed", (feedName, data, timestamp) => {
+    console.log("Premium Streaming data received");
+
+    if (!fullState.R) {
+      return;
+    }
+
+    switch (feedName) {
+      case "Heartbeat":
+        if (fullState?.R?.Heartbeat) {
+          deepMerge(fullState.R.Heartbeat, data);
+        }
+        break;
+
+      case "CarData.z":
+        if (fullState?.R?.CarData) {
+          deepMerge(fullState.R.CarData, data);
+        }
+        break;
+
+      case "Position.z":
+        if (fullState?.R?.Position) {
+          deepMerge(fullState.R.Position, data);
+        }
+        break;
+
+      case "TimingData":
+        if (fullState?.R?.TimingData) {
+          deepMerge(fullState.R.TimingData, data);
+        }
+        break;
+
+      case "TimingStats":
+        if (fullState?.R?.TimingStats) {
+          deepMerge(fullState.R.TimingStats, data);
+        }
+        break;
+
+      case "TimingAppData":
+        if (fullState?.R?.TimingAppData) {
+          deepMerge(fullState.R.TimingAppData, data);
+        }
+        break;
+
+      case "WeatherData":
+        if (fullState?.R?.WeatherData) {
+          deepMerge(fullState.R.WeatherData, data);
+        }
+        break;
+
+      case "TrackStatus":
+        if (fullState?.R?.TrackStatus) {
+          deepMerge(fullState.R.TrackStatus, data);
+        }
+        break;
+
+      case "DriverList":
+        if (fullState?.R?.DriverList) {
+          deepMerge(fullState.R.DriverList, data);
+        }
+        break;
+
+      case "RaceControlMessages":
+        if (fullState?.R?.RaceControlMessages) {
+          deepMerge(fullState.R.RaceControlMessages, data);
+        }
+        break;
+
+      case "SessionInfo":
+        if (fullState?.R?.SessionInfo) {
+          deepMerge(fullState.R.SessionInfo, data);
+        }
+        break;
+
+      case "SessionData":
+        if (fullState?.R?.SessionData) {
+          deepMerge(fullState.R.SessionData, data);
+        }
+        break;
+
+      case "ExtrapolatedClock":
+        if (fullState?.R?.ExtrapolatedClock) {
+          deepMerge(fullState.R.ExtrapolatedClock, data);
+        }
+        break;
+
+      case "TyreStintSeries":
+        if (fullState?.R?.TyreStintSeries) {
+          deepMerge(fullState.R.TyreStintSeries, data);
+        }
+        break;
+
+      case "TopThree":
+        if (fullState?.R?.TopThree) {
+          deepMerge(fullState.R.TopThree, data);
+        }
+        break;
+
+      default:
+        console.warn(`Feed "${feedName}" not recognized.`);
+    }
+
+    frontendSockets.forEach((ws) => {
+      if (ws.readyState === WebSocket.OPEN) {
+        const streamingData = {
+          M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
+        };
+        ws.send(Buffer.from(JSON.stringify(streamingData)));
+      }
+    });
+  });
+
+  connection.onclose((error) => {
+    console.log("Connection closed: ", error);
+  });
+
+  try {
+    await connection.start();
+
+    const subscriptionData = await connection.invoke("Subscribe", [
+      "Heartbeat",
+      "CarData",
+      "Position",
+      "ExtrapolatedClock",
+      "TopThree",
+      "TimingStats",
+      "TimingAppData",
+      "WeatherData",
+      "TrackStatus",
+      "DriverList",
+      "RaceControlMessages",
+      "SessionInfo",
+      "SessionData",
+      "LapCount",
+      "TimingData",
+      "TyreStintSeries",
+      "TeamRadio",
+      "CarData.z",
+      "Position.z",
+    ]);
+
+    if (subscriptionData) {
+      console.log("Premium data subscription fullfilled.");
+      fullState.R = subscriptionData;
+    }
+
+    return connection;
+  } catch (error) {
+    console.error("Connection failed: ", error);
+    throw error;
+  }
+}
+
 // Estableciendo nuestro WebSocket
 const wss = new ws.WebSocketServer({ server });
 wss.on("connection", (ws) => {
   frontendSockets.push(ws);
+  console.log(
+    "New client connected. Total clients: %d",
+    frontendSockets.length
+  );
 
   if (fullState != null) {
     const buffer = Buffer.from(JSON.stringify(fullState));
@@ -317,44 +517,70 @@ wss.on("connection", (ws) => {
   });
 });
 
+// Función principal
 async function main() {
   try {
-    const resp = await negotiate();
+    const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN;
+    let negotiation, sock;
 
-    const sock = await connectwss(
-      resp.data["ConnectionToken"],
-      resp.headers["set-cookie"]
-    );
-    sock.send(
-      JSON.stringify({
-        H: "Streaming",
-        M: "Subscribe",
-        A: [
-          [
-            "Heartbeat",
-            "CarData",
-            "Position",
-            "ExtrapolatedClock",
-            "TopThree",
-            "TimingStats",
-            "TimingAppData",
-            "WeatherData",
-            "TrackStatus",
-            "DriverList",
-            "RaceControlMessages",
-            "SessionInfo",
-            "SessionData",
-            "LapCount",
-            "TimingData",
-            "TyreStintSeries",
-            "TeamRadio",
-            "CarData.z",
-            "Position.z",
+    try {
+      negotiation = await negotiatePremium(subscriptionToken);
+      if (negotiation && negotiation.status === 200) {
+        sock = await connectWithSignalRPremium(
+          subscriptionToken,
+          negotiation.headers["set-cookie"]
+        );
+        return;
+      }
+    } catch (premiumError) {
+      console.warn(
+        "Negociación premium fallida, intentando sin cuenta premium..."
+      );
+    }
+
+    // Si la negociación premium falla, negociar y conectar sin cuenta premium
+    try {
+      negotiation = await negotiate();
+      sock = await connectwss(
+        resp.data["ConnectionToken"],
+        resp.headers["set-cookie"]
+      );
+      sock.send(
+        JSON.stringify({
+          H: "Streaming",
+          M: "Subscribe",
+          A: [
+            [
+              "Heartbeat",
+              "CarData",
+              "Position",
+              "ExtrapolatedClock",
+              "TopThree",
+              "TimingStats",
+              "TimingAppData",
+              "WeatherData",
+              "TrackStatus",
+              "DriverList",
+              "RaceControlMessages",
+              "SessionInfo",
+              "SessionData",
+              "LapCount",
+              "TimingData",
+              "TyreStintSeries",
+              "TeamRadio",
+              "CarData.z",
+              "Position.z",
+            ],
           ],
-        ],
-        I: 1,
-      })
-    );
+          I: 1,
+        })
+      );
+    } catch (basicError) {
+      console.error(
+        "No se pudo conectar ni con premium ni sin premium:",
+        basicError
+      );
+    }
   } catch (e) {
     console.error(e);
   }
