@@ -110,7 +110,7 @@ app.get("/calendar", async (req, res) => {
       nextEvent,
       timeUntilNext,
       totalEvents: formattedEvents.length,
-      upcomingEvents: formattedEvents.slice(0, 5), // Próximos 5 eventos
+      upcomingEvents: formattedEvents.slice(0, 8), // Próximos 8 eventos
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
@@ -434,6 +434,12 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
       case "TyreStintSeries":
         if (fullState?.R?.TyreStintSeries) {
           deepMerge(fullState.R.TyreStintSeries, data);
+        }
+        break;
+
+      case "TeamRadio":
+        if (fullState?.R?.TeamRadio) {
+          deepMerge(fullState.R.TeamRadio, data);
         }
         break;
 
