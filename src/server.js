@@ -112,7 +112,7 @@ app.get("/calendar", async (req, res) => {
       nextEvent,
       timeUntilNext,
       totalEvents: formattedEvents.length,
-      upcomingEvents: formattedEvents, 
+      upcomingEvents: formattedEvents,
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
@@ -195,6 +195,11 @@ app.get("/upcoming", async (req, res) => {
 
 let frontendSockets = [];
 var fullState = { R: {} };
+let reconnectInterval = 1000;
+const maxReconnectInterval = 30000;
+const reconnectBackoff = 1.5;
+let reconnectAttempts = 0;
+const maxReconnectAttempts = 3;
 
 server.listen(PORT, () => {
   console.log("Server listening in port: " + PORT);
@@ -416,7 +421,27 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
     .build();
 
   connection.on("feed", (feedName, data, timestamp) => {
-    console.log("Premium Streaming data received");
+    if (data.SessionStatus === "Inactive") {
+      console.log(
+        "Inactive session detected, attempting to reconnect in " +
+          reconnectInterval / 1000 +
+          "s."
+      );
+      reconnectAttempts++;
+      if (reconnectAttempts < maxReconnectAttempts) {
+        reconnectInterval = Math.min(
+          reconnectInterval * reconnectBackoff,
+          maxReconnectInterval
+        );
+        setTimeout(() => {
+          connectWithSignalRPremium(subscriptionToken, cookies);
+        }, reconnectInterval);
+      } else {
+        console.error(
+          `Reached ${maxReconnectAttempts} attempts, failed to reconnect. `
+        );
+      }
+    }
 
     if (!fullState.R) {
       return;
@@ -534,7 +559,8 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
   });
 
   connection.onclose((error) => {
-    console.log("Connection closed: ", error);
+    console.log("Error at premium websocket: ", error);
+    return error;
   });
 
   try {
@@ -609,13 +635,12 @@ async function main() {
         return;
       }
     } catch (premiumError) {
-      console.warn(
-        "Negociación premium fallida, intentando sin cuenta premium..."
-      );
+      console.warn("Failed premium connection.");
     }
 
     // Si la negociación premium falla, negociar y conectar sin cuenta premium
     try {
+      console.log("Started common negotiation");
       negotiation = await negotiate();
       sock = await connectwss(
         resp.data["ConnectionToken"],
@@ -651,11 +676,26 @@ async function main() {
           I: 1,
         })
       );
-    } catch (basicError) {
-      console.error(
-        "No se pudo conectar ni con premium ni sin premium:",
-        basicError
+    } catch (error) {
+      console.log(
+        "Common connection closed, attempting to reconnect in " +
+          reconnectInterval / 1000 +
+          "s."
       );
+      reconnectAttempts++;
+      if (reconnectAttempts < maxReconnectAttempts) {
+        reconnectInterval = Math.min(
+          reconnectInterval * reconnectBackoff,
+          maxReconnectInterval
+        );
+        setTimeout(() => {
+          connectWithSignalRPremium(subscriptionToken, cookies);
+        }, reconnectInterval);
+      } else {
+        console.error(
+          `Reached ${maxReconnectAttempts} attempts, failed to reconnect. `
+        );
+      }
     }
   } catch (e) {
     console.error(e);
