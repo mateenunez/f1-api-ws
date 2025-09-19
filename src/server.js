@@ -423,24 +423,9 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
   connection.on("feed", (feedName, data, timestamp) => {
     if (data.SessionStatus === "Inactive") {
       console.log(
-        "Inactive session detected, attempting to reconnect in " +
-          reconnectInterval / 1000 +
-          "s."
+        "Inactive session detected, cleaning TyreStintSeries."
       );
-      reconnectAttempts++;
-      if (reconnectAttempts < maxReconnectAttempts) {
-        reconnectInterval = Math.min(
-          reconnectInterval * reconnectBackoff,
-          maxReconnectInterval
-        );
-        setTimeout(() => {
-          connectWithSignalRPremium(subscriptionToken, cookies);
-        }, reconnectInterval);
-      } else {
-        console.error(
-          `Reached ${maxReconnectAttempts} attempts, failed to reconnect. `
-        );
-      }
+      fullState?.R?.TyreStintSeries = {};
     }
 
     if (!fullState.R) {
