@@ -426,8 +426,9 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
     }
 
     if (data.SessionStatus === "Inactive") {
-      console.log("Inactive session detected");
-      fullState.R.TyreStintSeries = {}
+      console.log("Inactive session detected. Cleaning some attributes.");
+      fullState.R.TyreStintSeries = {};
+      fullState.R.CarData = {}
     }
 
     switch (feedName) {
