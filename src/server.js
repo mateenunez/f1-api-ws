@@ -490,7 +490,7 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
         if (fullState?.R?.SessionInfo) {
           if (data.SessionStatus === "Inactive") {
             console.log(
-              "Inactive session detected, cleaning tyres and numberOfPitStops"
+              "Inactive session detected, cleaning some attributes..."
             );
             fullState.R.TimingAppData = null;
             fullState.R.TyreStintSeries = null;
@@ -500,6 +500,24 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
                 typeof fullState.R.TimingData.Lines[key] === "object"
               ) {
                 fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
+                fullState.R.TimingData.Lines[key].GapToLeader = "";
+                fullState.R.TimingData.Lines[key].IntervalToPositionAhead = "";
+                fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
+                fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
+                fullState.R.TimingData.Lines[key].Stats = [];
+              }
+            });
+            Object.keys(fullState.R.TimingStats.Lines).forEach((key) => {
+              if (
+                fullState.R.TimingStats.Lines[key] &&
+                typeof fullState.R.TimingStats.Lines[key] === "object"
+              ) {
+                fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Value =
+                  "";
+                fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap = "";
+                fullState.R.TimingStats.Lines[
+                  key
+                ].PersonalBestLapTime.Position = "";
               }
             });
           }
