@@ -426,9 +426,17 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
     }
 
     if (data.SessionStatus === "Inactive") {
-      console.log("Inactive session detected. Cleaning some attributes.");
-      fullState.R.TyreStintSeries = {};
-      fullState.R.CarData = {}
+      console.log("Inactive session detected, cleaning tyres and numberOfPitStops");
+      fullState.R.TimingAppData = null;
+      fullState.R.TyreStintSeries = null;
+      Object.keys(fullState.R.TimingData.Lines).forEach((key) => {
+        if (
+          fullState.R.TimingData.Lines[key] &&
+          typeof fullState.R.TimingData.Lines[key] === "object"
+        ) {
+          fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
+        }
+      });
     }
 
     switch (feedName) {
