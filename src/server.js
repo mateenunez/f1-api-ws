@@ -425,20 +425,6 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
       return;
     }
 
-    if (data.SessionStatus === "Inactive") {
-      console.log("Inactive session detected, cleaning tyres and numberOfPitStops");
-      fullState.R.TimingAppData = null;
-      fullState.R.TyreStintSeries = null;
-      Object.keys(fullState.R.TimingData.Lines).forEach((key) => {
-        if (
-          fullState.R.TimingData.Lines[key] &&
-          typeof fullState.R.TimingData.Lines[key] === "object"
-        ) {
-          fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
-        }
-      });
-    }
-
     switch (feedName) {
       case "Heartbeat":
         if (fullState?.R?.Heartbeat) {
@@ -502,6 +488,21 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
 
       case "SessionInfo":
         if (fullState?.R?.SessionInfo) {
+          if (data.SessionStatus === "Inactive") {
+            console.log(
+              "Inactive session detected, cleaning tyres and numberOfPitStops"
+            );
+            fullState.R.TimingAppData = null;
+            fullState.R.TyreStintSeries = null;
+            Object.keys(fullState.R.TimingData.Lines).forEach((key) => {
+              if (
+                fullState.R.TimingData.Lines[key] &&
+                typeof fullState.R.TimingData.Lines[key] === "object"
+              ) {
+                fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
+              }
+            });
+          }
           deepMerge(fullState.R.SessionInfo, data);
         }
         break;
