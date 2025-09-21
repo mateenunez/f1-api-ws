@@ -505,6 +505,8 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
                 fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
                 fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
                 fullState.R.TimingData.Lines[key].Stats = [];
+                fullState.R.TimingData.Lines[key].Retired = false;
+                fullState.R.TimingData.Lines[key].KnockedOut = false;
               }
             });
             Object.keys(fullState.R.TimingStats.Lines).forEach((key) => {
