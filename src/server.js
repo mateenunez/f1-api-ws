@@ -555,6 +555,12 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
         }
         break;
 
+      case "LapCount":
+        if (fullState?.R?.LapCount) {
+          deepMerge(fullState.R.LapCount, data);
+        }
+        break;
+
       default:
         console.warn(`Feed "${feedName}" not recognized.`);
     }
