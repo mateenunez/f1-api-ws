@@ -193,6 +193,37 @@ app.get("/upcoming", async (req, res) => {
   }
 });
 
+app.get("/download-mp3", async (req, res) => {
+  try {
+    const urlMP3 = req.query.url;
+    const idx = req.query.idx;
+
+    if (!urlMP3) {
+      return res.status(400).send("URL required");
+    }
+
+    if (!isSafe(urlMP3)) {
+      return res.status(400).send("URL not allowed");
+    }
+
+    const response = await axios({
+      method: "get",
+      url: urlMP3,
+      responseType: "stream",
+    });
+
+    const filename = "f1telemetry-audio"+idx+".mp3";
+    res.setHeader("Content-Disposition", 'attachment; filename='+filename);
+    res.setHeader("Content-Type", response.headers["content-type"]);
+
+    response.data.pipe(res);
+  } catch (error) {
+    console.error("Error:", error.message);
+    res.status(500).send("Error at file download");
+  }
+});
+
+
 let frontendSockets = [];
 var fullState = { R: {} };
 let reconnectInterval = 1000;
@@ -204,6 +235,10 @@ const maxReconnectAttempts = 3;
 server.listen(PORT, () => {
   console.log("Server listening in port: " + PORT);
 });
+
+function isSafe(url) {
+  return url.startsWith('https://livetiming.formula1.com/');
+}
 
 // Función para guardar los datos de streaming en la variable fullState
 function deepMerge(target, source) {
