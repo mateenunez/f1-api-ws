@@ -14,6 +14,8 @@ class WebSocketServer extends EventEmitter {
     }
     this.state = getInstance();
 
+    this.clients = 0;
+
     this.broadcastEmitter = new EventEmitter();
 
     this.wss = new WebSocket.Server({ server });
@@ -23,10 +25,8 @@ class WebSocketServer extends EventEmitter {
           ws.send(data);
         }
       };
-      console.log(
-        "New client connected. Total clients: %d",
-        this.broadcastEmitter.listenerCount()
-      );
+
+      this.clients++;
 
       const snapshot = this.state.getState();
       if (snapshot != null) {
@@ -37,9 +37,12 @@ class WebSocketServer extends EventEmitter {
       this.broadcastEmitter.on("broadcast", messageForwarder);
       ws._messageForwarder = messageForwarder;
 
-      this.wss.on("close", () => {
+      ws.on("close", () => {
         this.broadcastEmitter.removeListener("broadcast", ws._messageForwarder);
+        --this.clients;
       });
+
+      console.log("New client connected. Total clients: %d", this.clients);
     });
   }
 
