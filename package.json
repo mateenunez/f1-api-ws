@@ -1,11 +1,11 @@
 {
   "name": "f1-api-ws",
-  "version": "2.0.0",
-  "main": "./src/server.js",
+  "version": "3.0.0",
+  "main": "./src/app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon ./src/server.js.",
-    "start": "node ./src/server.js",
+    "dev": "nodemon ./src/app.js.",
+    "start": "node ./src/app.js",
     "build": "echo \"No build step necessary\""
   },
   "keywords": [],
