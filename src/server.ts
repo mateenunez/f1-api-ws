@@ -1,11 +1,14 @@
-const express = require("express");
-const axios = require("axios");
-const ws = require("ws");
-const cors = require("cors");
-const http = require("http");
-const ical = require("ical");
-const signalR = require("@microsoft/signalr");
-require("dotenv").config();
+import express from "express";
+import axios, { AxiosError, AxiosResponse } from "axios";
+import ws from "ws";
+import cors from "cors";
+import http from "http";
+import ical from "ical";
+import signalR, { HubConnection } from "@microsoft/signalr";
+import dotenv from 'dotenv';
+import { exit } from "process";
+
+dotenv.config();
 
 const app = express();
 const server = http.createServer(app);
@@ -55,7 +58,16 @@ app.get("/", (req, res) => {
   `);
 });
 
-app.get("/calendar", async (req, res) => {
+interface FormattedEvent {
+  id: string;
+  summary: string;
+  start: Date;
+  end?: Date,
+  location: string;
+  status: string;
+}
+
+const calendarHandler = async (req: express.Request, res: express.Response) => {
   try {
     const calendarUrl =
       "https://ics.ecal.com/ecal-sub/689fc469915d6b00080fec00/Formula%201.ics";
@@ -65,31 +77,32 @@ app.get("/calendar", async (req, res) => {
 
     const events = ical.parseICS(calendarData);
 
-    const formattedEvents = [];
+    const formattedEvents: FormattedEvent[] = [];
     const now = new Date();
 
     for (let eventId in events) {
       const event = events[eventId];
 
       if (event.start && event.start > now) {
+
         formattedEvents.push({
           id: eventId,
           summary: event.summary || "Evento F1",
           start: event.start,
           end: event.end,
           location: event.location || "",
-          status: event.status || "CONFIRMED",
+          status: event.status ? event.status.toString() : "CONFIRMED",
         });
       }
     }
 
-    formattedEvents.sort((a, b) => a.start - b.start);
+    formattedEvents.sort((a: FormattedEvent, b: FormattedEvent) => a.start.getMilliseconds() - b.start.getMilliseconds());
 
     const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
 
     let timeUntilNext = null;
     if (nextEvent) {
-      const timeDiff = nextEvent.start - now;
+      const timeDiff = nextEvent.start.getMilliseconds() - now.getMilliseconds();
       const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
       const hours = Math.floor(
         (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
@@ -116,82 +129,19 @@ app.get("/calendar", async (req, res) => {
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
+    const message = error instanceof Error ? error.message : "Unknown error."
     console.error("Error al obtener el calendario:", error);
     res.status(500).json({
       success: false,
       error: "Error al obtener el calendario",
-      message: error.message,
+      message,
     });
   }
-});
+};
 
-app.get("/upcoming", async (req, res) => {
-  try {
-    const calendarUrl =
-      "https://ics.ecal.com/ecal-sub/689fc469915d6b00080fec00/Formula%201.ics";
+app.get("/calendar", calendarHandler);
 
-    const response = await axios.get(calendarUrl);
-    const calendarData = response.data;
-
-    const events = ical.parseICS(calendarData);
-
-    const formattedEvents = [];
-    const now = new Date();
-
-    for (let eventId in events) {
-      const event = events[eventId];
-
-      if (event.start && event.start > now) {
-        formattedEvents.push({
-          id: eventId,
-          summary: event.summary || "Evento F1",
-          start: event.start,
-          end: event.end,
-          location: event.location || "",
-          status: event.status || "CONFIRMED",
-        });
-      }
-    }
-
-    formattedEvents.sort((a, b) => a.start - b.start);
-
-    const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
-
-    let timeUntilNext = null;
-    if (nextEvent) {
-      const timeDiff = nextEvent.start - now;
-      const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor(
-        (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
-      );
-      const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
-
-      timeUntilNext = {
-        days,
-        hours,
-        minutes,
-        seconds,
-        totalMinutes: Math.floor(timeDiff / (1000 * 60)),
-        totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
-      };
-    }
-
-    res.json({
-      success: true,
-      nextEvent,
-      timeUntilNext,
-      lastUpdated: new Date().toISOString(),
-    });
-  } catch (error) {
-    console.error("Error al obtener el calendario:", error);
-    res.status(500).json({
-      success: false,
-      error: "Error al obtener el calendario",
-      message: error.message,
-    });
-  }
-});
+app.get("/upcoming", calendarHandler);
 
 app.get("/download-mp3", async (req, res) => {
   try {
@@ -202,30 +152,30 @@ app.get("/download-mp3", async (req, res) => {
       return res.status(400).send("URL required");
     }
 
-    if (!isSafe(urlMP3)) {
+    if (!isSafe(urlMP3.toString())) {
       return res.status(400).send("URL not allowed");
     }
-
     const response = await axios({
       method: "get",
-      url: urlMP3,
+      url: urlMP3.toString(),
       responseType: "stream",
     });
 
-    const filename = "f1telemetry-audio"+idx+".mp3";
-    res.setHeader("Content-Disposition", 'attachment; filename='+filename);
+    const filename = "f1telemetry-audio" + idx + ".mp3";
+    res.setHeader("Content-Disposition", 'attachment; filename=' + filename);
     res.setHeader("Content-Type", response.headers["content-type"]);
 
     response.data.pipe(res);
   } catch (error) {
-    console.error("Error:", error.message);
+    const message = error instanceof Error ? error.message : "Unknown error."
+    console.error("Error:", message);
     res.status(500).send("Error at file download");
   }
 });
 
 
-let frontendSockets = [];
-var fullState = { R: {} };
+let frontendSockets: ws.WebSocket[] = [];
+var fullState: { R: any } = { R: {} };
 let reconnectInterval = 1000;
 const maxReconnectInterval = 30000;
 const reconnectBackoff = 1.5;
@@ -236,12 +186,12 @@ server.listen(PORT, () => {
   console.log("Server listening in port: " + PORT);
 });
 
-function isSafe(url) {
+function isSafe(url: string) {
   return url.startsWith('https://livetiming.formula1.com/');
 }
 
 // Función para guardar los datos de streaming en la variable fullState
-function deepMerge(target, source) {
+function deepMerge(target: any, source: any) {
   for (const key in source) {
     if (Array.isArray(source[key])) {
       console.log("Array replaced at key:", key);
@@ -258,7 +208,7 @@ function deepMerge(target, source) {
 }
 
 // Negociación sin F1TV Premium
-async function negotiate() {
+async function negotiate(): Promise<AxiosResponse> {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const url = `https://livetiming.formula1.com/signalr/negotiate?connectionData=${hub}&clientProtocol=1.5`;
   const resp = await axios.get(url);
@@ -266,11 +216,12 @@ async function negotiate() {
 }
 
 // Conexión vieja sin F1TV Premium
-async function connectwss(token, cookie) {
+async function connectwss(token: string, cookie: string): Promise<ws.WebSocket> {
   const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
   const encodedToken = encodeURIComponent(token);
   const url = `wss://livetiming.formula1.com/signalr/connect?clientProtocol=1.5&transport=webSockets&connectionToken=${encodedToken}&connectionData=${hub}`;
-  const p = new Promise((res, rej) => {
+
+  return new Promise((resolve: (value: ws.WebSocket) => void, reject: (reason?: any) => void) => {
     const sock = new ws.WebSocket(url, {
       headers: {
         "User-Agent": "BestHTTP",
@@ -279,13 +230,13 @@ async function connectwss(token, cookie) {
       },
     });
 
-    sock.on("open", (ev) => {
-      res(sock);
+    sock.on("open", () => {
+      resolve(sock);
     });
 
-    sock.on("message", (data) => {
+    sock.on("message", (data: ws.RawData) => {
       // Guardar ultima información de retransmisión
-      const parsedData = JSON.parse(data);
+      const parsedData = JSON.parse(data.toString());
       if (parsedData.R) {
         fullState = parsedData;
         console.log("Basic data subscription fullfilled");
@@ -294,7 +245,7 @@ async function connectwss(token, cookie) {
       // Actualizar el estado de la variable on connection data
       if (Array.isArray(parsedData.M)) {
         console.log("Basic streaming data received");
-        parsedData.M.forEach((update) => {
+        parsedData.M.forEach((update: any) => {
           if (update.H === "Streaming" && update.M === "feed") {
             const [feedName, data, timestamp] = update.A;
 
@@ -409,11 +360,10 @@ async function connectwss(token, cookie) {
       });
     });
   });
-  return p;
 }
 
 // Negociación con F1TV Premium
-async function negotiatePremium(subscriptionToken) {
+async function negotiatePremium(subscriptionToken: string): Promise<AxiosResponse> {
   try {
     const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
     const url = `https://livetiming.formula1.com/signalrcore/negotiate?connectionData=${hub}&clientProtocol=1.5`;
@@ -430,15 +380,17 @@ async function negotiatePremium(subscriptionToken) {
     const response = await axios.post(url, null, { headers });
     return response;
   } catch (error) {
+    const e: AxiosError = error as AxiosError;
     console.log(
       "Error during negotiation:",
-      error.response?.data || error.message
+      e.response?.data || e.message
     );
+    return Promise.reject(error);
   }
 }
 
 // Conexión nueva con F1TV Premium
-async function connectWithSignalRPremium(subscriptionToken, cookies) {
+async function connectWithSignalRPremium(subscriptionToken: string, cookies: string[]): Promise<signalR.HubConnection> {
   const cookieString = cookies
     .map((cookie) => cookie.split(";")[0].trim())
     .join("; ");
@@ -656,7 +608,7 @@ async function connectWithSignalRPremium(subscriptionToken, cookies) {
 
 // Estableciendo nuestro WebSocket
 const wss = new ws.WebSocketServer({ server });
-wss.on("connection", (ws) => {
+wss.on("connection", (ws: ws.WebSocket) => {
   frontendSockets.push(ws);
   console.log(
     "New client connected. Total clients: %d",
@@ -677,14 +629,24 @@ wss.on("connection", (ws) => {
 async function main() {
   try {
     const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN;
-    let negotiation, sock;
+    if (!subscriptionToken) {
+      console.error("Subscription token not found");
+      exit(1)
+    }
+    let negotiation: AxiosResponse;
+    let cookies: string[];
 
     try {
       negotiation = await negotiatePremium(subscriptionToken);
+
+      let sock: HubConnection;
+
+      cookies = negotiation.headers["set-cookie"] ?? [];
+
       if (negotiation && negotiation.status === 200) {
         sock = await connectWithSignalRPremium(
           subscriptionToken,
-          negotiation.headers["set-cookie"]
+          cookies
         );
         return;
       }
@@ -695,10 +657,17 @@ async function main() {
     // Si la negociación premium falla, negociar y conectar sin cuenta premium
     try {
       console.log("Started common negotiation");
-      negotiation = await negotiate();
-      sock = await connectwss(
-        resp.data["ConnectionToken"],
-        resp.headers["set-cookie"]
+      const negotiationResponse = await negotiate();
+
+      const cookies: string[] = negotiationResponse.headers["set-cookie"] ?? [];
+
+      const cookieString = cookies
+        .map((cookie) => cookie.split(";")[0].trim())
+        .join("; ");
+
+      const sock = await connectwss(
+        negotiationResponse.data["ConnectionToken"],
+        cookieString,
       );
       sock.send(
         JSON.stringify({
@@ -733,8 +702,8 @@ async function main() {
     } catch (error) {
       console.log(
         "Common connection closed, attempting to reconnect in " +
-          reconnectInterval / 1000 +
-          "s."
+        reconnectInterval / 1000 +
+        "s."
       );
       reconnectAttempts++;
       if (reconnectAttempts < maxReconnectAttempts) {

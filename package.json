@@ -4,8 +4,8 @@
   "main": "./src/server.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon ./src/server.js.",
-    "start": "node ./src/server.js",
+    "dev": "nodemon -e ts -w ./src -x npm run start",
+    "start": "ts-node ./src/server.ts",
     "build": "tsc"
   },
   "keywords": [],
@@ -13,8 +13,16 @@
   "license": "ISC",
   "description": "",
   "devDependencies": {
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/ical": "^0.8.3",
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.36.0",
     "nodemon": "^3.1.10",
-    "ts-node": "^10.9.2"
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
   },
   "dependencies": {
     "@microsoft/signalr": "^9.0.6",
@@ -24,7 +32,6 @@
     "express": "^5.1.0",
     "ical": "^0.8.0",
     "tough-cookie": "^6.0.0",
-    "typescript": "^5.9.2",
     "ws": "^8.18.3"
   }
 }
