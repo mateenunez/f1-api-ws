@@ -1,8 +1,12 @@
-const EventEmitter = require("events");
 
-class StateProcessor extends EventEmitter {
+interface FullState {
+  R: any
+}
+
+class StateProcessor {
+  fullState: FullState;
+
   constructor() {
-    super();
     this.fullState = { R: {} };
   }
 
@@ -10,26 +14,23 @@ class StateProcessor extends EventEmitter {
     return this.fullState;
   }
 
-  updateState(newState) {
+  updateState(newState: FullState) {
     this.fullState = newState;
-    this.emit('stateUpdated', this.fullState);
   }
 
-  updateStatePremium(newState) {
+  updateStatePremium(newState: FullState) {
     this.fullState.R = newState;
-    this.emit('stateUpdated', this.fullState);
   }
 
-  updatePartialState(path, data) {
+  updatePartialState(path: string, data: any) {
     if (path === 'R' && data) {
       this.fullState.R = data;
     } else {
       this.deepMerge(this.fullState, { [path]: data });
     }
-    this.emit('stateUpdated', this.fullState);
   }
 
-  deepMerge(target, source) {
+  deepMerge(target: any, source: any) {
     for (const key in source) {
       if (Array.isArray(source[key])) {
         console.log("Array replaced at key:", key);
@@ -45,7 +46,7 @@ class StateProcessor extends EventEmitter {
     }
   }
 
-  processFeed(feedName, data, timestamp) {
+  processFeed(feedName: string, data: any, timestamp: string) {
     if (!this.fullState.R) {
       return;
     }
@@ -113,12 +114,37 @@ class StateProcessor extends EventEmitter {
 
       case "SessionInfo":
         if (this.fullState?.R?.SessionInfo) {
-          if (data.SessionStatus === "Inactive") {
-            console.log("Inactive session detected, cleaning some attributes...");
-            this.fullState.R.TimingAppData = null;
-            this.fullState.R.TyreStintSeries = null;
-            // ... resto de la lógica de limpieza
-          }
+          this.fullState.R.TimingAppData = null;
+          this.fullState.R.TyreStintSeries = null;
+          Object.keys(this.fullState.R.TimingData.Lines).forEach((key) => {
+            if (
+              this.fullState.R.TimingData.Lines[key] &&
+              typeof this.fullState.R.TimingData.Lines[key] === "object"
+            ) {
+              this.fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
+              this.fullState.R.TimingData.Lines[key].GapToLeader = "";
+              this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead = "";
+              this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
+              this.fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
+              this.fullState.R.TimingData.Lines[key].Stats = [];
+              this.fullState.R.TimingData.Lines[key].Retired = false;
+              this.fullState.R.TimingData.Lines[key].KnockedOut = false;
+            }
+          });
+          Object.keys(this.fullState.R.TimingStats.Lines).forEach((key) => {
+            if (
+              this.fullState.R.TimingStats.Lines[key] &&
+              typeof this.fullState.R.TimingStats.Lines[key] === "object"
+            ) {
+              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Value =
+                "";
+              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap = "";
+              this.fullState.R.TimingStats.Lines[
+                key
+              ].PersonalBestLapTime.Position = "";
+            }
+          });
+
           this.deepMerge(this.fullState.R.SessionInfo, data);
         }
         break;
@@ -163,20 +189,13 @@ class StateProcessor extends EventEmitter {
         console.warn(`Feed "${feedName}" not recognized.`);
     }
 
-    // Emitir evento con los datos procesados
-    this.emit('feedProcessed', {
-      feedName,
-      data,
-      timestamp,
-      fullState: this.fullState
-    });
   }
 }
 
 // Singleton pattern
-let instance = null;
+let instance: any = null;
 
-module.exports = {
+export = {
   StateProcessor,
   getInstance: () => {
     if (!instance) {
