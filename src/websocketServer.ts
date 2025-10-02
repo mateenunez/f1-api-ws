@@ -15,13 +15,15 @@ class WebSocketServer {
     }
     this.state = stateProcessor.getInstance();
 
-    this.wss = new WebSocket.Server({ server });
+    this.wss = new WebSocket.Server({ server, clientTracking: true });
     this.wss.on("connection", (ws) => {
       const eventListener = (data: any) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(data);
         }
       };
+
+      console.log("Clients connected: " + this.wss.clients.size)
 
       const snapshot = this.state.getState();
 

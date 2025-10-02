@@ -8,21 +8,25 @@ import { Response, Request } from "express";
 dotenv.config()
 
 
-interface FormattedEvent {
+interface IcalEvent {
   id: string;
-  summary: string;
+  type: string;
+  track: string;
   start: Date;
   end?: Date,
   location: string;
 }
 
 interface EventsByLocation {
+  track: string;
   location: string;
-  p1?: FormattedEvent;
-  p2?: FormattedEvent;
-  p3?: FormattedEvent;
-  q?: FormattedEvent;
-  r?: FormattedEvent;
+  p1?: IcalEvent;
+  p2?: IcalEvent;
+  p3?: IcalEvent;
+  q?: IcalEvent;
+  r?: IcalEvent;
+  sq?: IcalEvent;
+  sr?: IcalEvent;
   start: Date;
 }
 
@@ -30,28 +34,106 @@ function isSafe(url: string) {
   return url.startsWith("https://livetiming.formula1.com/");
 }
 
-function groupByLocation(formattedEvents: FormattedEvent[]) {
+function getEventType(summary: string): 'Practice 1' | 'Practice 2' | 'Practice 3' | 'Qualifying' | 'Sprint Qualification' | 'Sprint Race' | 'Race' | 'Other' {
+  const summaryLower = summary.toLowerCase();
+
+  if (summaryLower.includes('practice 1')) {
+    return 'Practice 1';
+  } else if (summaryLower.includes('practice 2')) {
+    return 'Practice 2';
+  } else if (summaryLower.includes('practice 3')) {
+    return 'Practice 3';
+  } else if (summaryLower.includes('qualifying')) {
+    return 'Qualifying';
+  } else if (summaryLower.includes('sprint qualification')) {
+    return 'Sprint Qualification';
+  } else if (summaryLower.includes('sprint race')) {
+    return 'Sprint Race';
+  } else if (summaryLower.includes('race')) {
+    return 'Race';
+  }
+
+  return 'Other';
+}
+
+function getTrack(summary: string): string {
+  const regex = /FORMULA 1\s+(.+?)\s+20/i;
+  const match = summary.match(regex);
+
+  if (match && match[1]) {
+    let circuito = match[1].trim();
+    circuito = circuito.replace(/\s\d{4}$/, '').trim();
+    return circuito;
+  }
+
+  return "";
+}
+
+async function getEvents() {
+  const calendarUrl = process.env.CALENDAR_URL;
+
+  const response = await axios.get(calendarUrl ?? "");
+  const calendarData = response.data;
+
+  const events = ical.parseICS(calendarData);
+
+  const formattedEvents: IcalEvent[] = [];
+  const now = new Date();
+
+  for (let eventId in events) {
+    const event = events[eventId];
+
+    if (event.start && event.start > now) {
+
+      formattedEvents.push({
+        id: eventId,
+        type: getEventType(event.summary || ""),
+        start: event.start,
+        end: event.end,
+        track: getTrack(event.summary || ""),
+        location: event.location || "",
+      });
+    }
+  }
+
+  return formattedEvents;
+}
+
+
+function groupByLocation(formattedEvents: IcalEvent[]) {
   const gruposTemp = new Map<string, EventsByLocation>();
 
   formattedEvents.forEach(evento => {
-    const { location, summary, start } = evento;
+    const { type, track, start, location } = evento;
 
-    if (!gruposTemp.has(location)) {
-      gruposTemp.set(location, { location, start });
+    if (!gruposTemp.has(track)) {
+      gruposTemp.set(track, { track, start, location });
     }
 
-    const grupo = gruposTemp.get(location)!;
+    const grupo = gruposTemp.get(track)!;
 
-    if (summary.includes('Practice 1')) {
-      grupo.p1 = evento;
-    } else if (summary.includes('Practice 2')) {
-      grupo.p2 = evento;
-    } else if (summary.includes('Practice 3')) {
-      grupo.p3 = evento;
-    } else if (summary.includes('Qualifying')) {
-      grupo.q = evento;
-    } else if (summary.includes('Race')) {
-      grupo.r = evento;
+    switch (type) {
+      case 'Practice 1':
+        grupo.p1 = evento;
+        break;
+      case 'Practice 2':
+        grupo.p2 = evento;
+        break;
+      case 'Practice 3':
+        grupo.p3 = evento;
+        break;
+      case 'Qualifying':
+        grupo.q = evento;
+        break;
+      case 'Sprint Qualification':
+        grupo.sq = evento;
+        break;
+      case 'Sprint Race':
+        grupo.sr = evento;
+        break;
+      case 'Race':
+        grupo.r = evento;
+        break;
     }
   });
 
@@ -61,35 +143,12 @@ function groupByLocation(formattedEvents: FormattedEvent[]) {
   return orderedArray;
 }
 
-
 async function calendarHandle(req: Request, res: Response) {
   try {
-    const calendarUrl = process.env.CALENDAR_URL;
-
-    const response = await axios.get(calendarUrl ?? "");
-    const calendarData = response.data;
-
-    const events = ical.parseICS(calendarData);
-
-    const formattedEvents: FormattedEvent[] = [];
+    const formattedEvents = await getEvents();
     const now = new Date();
 
-    for (let eventId in events) {
-      const event = events[eventId];
-
-      if (event.start && event.start > now) {
-
-        formattedEvents.push({
-          id: eventId,
-          summary: event.summary || "Evento F1",
-          start: event.start,
-          end: event.end,
-          location: event.location || "",
-        });
-      }
-    }
-
-    formattedEvents.sort((a: FormattedEvent, b: FormattedEvent) =>
+    formattedEvents.sort((a: IcalEvent, b: IcalEvent) =>
       a.start.getTime() - b.start.getTime());
 
     const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
@@ -136,33 +195,10 @@ async function calendarHandle(req: Request, res: Response) {
 
 async function upcomingHandle(req: Request, res: Response) {
   try {
-    const calendarUrl = process.env.CALENDAR_URL as string;
+    const formattedEvents = await getEvents();
+    const now = new Date()
 
-    const response = await axios.get(calendarUrl ?? "");
-
-    const calendarData = response.data;
-
-    const events = ical.parseICS(calendarData);
-
-    const formattedEvents: FormattedEvent[] = [];
-    const now = new Date();
-
-    for (let eventId in events) {
-      const event = events[eventId];
-
-      if (event.start && event.start > now) {
-
-        formattedEvents.push({
-          id: eventId,
-          summary: event.summary || "Evento F1",
-          start: event.start,
-          end: event.end,
-          location: event.location || ""
-        });
-      }
-    }
-
-    formattedEvents.sort((a: FormattedEvent, b: FormattedEvent) =>
+    formattedEvents.sort((a: IcalEvent, b: IcalEvent) =>
       a.start.getTime() - b.start.getTime());
 
     const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
