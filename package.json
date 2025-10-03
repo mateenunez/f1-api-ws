@@ -1,28 +1,37 @@
 {
   "name": "f1-api-ws",
   "version": "2.0.0",
-  "main": "./src/server.js",
+  "main": "./src/app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "dev": "nodemon ./src/server.js.",
-    "start": "node ./src/server.js",
-    "build": "echo \"No build step necessary\""
+    "dev": "nodemon -e ts -w ./src -x npm run start",
+    "start": "ts-node ./src/app.ts",
+    "build": "tsc"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "description": "",
   "devDependencies": {
-    "axios": "^1.10.0",
-    "cors": "^2.8.5",
-    "express": "^5.1.0",
+    "@types/cors": "^2.8.19",
+    "@types/express": "^5.0.3",
+    "@types/ical": "^0.8.3",
+    "@types/node": "^24.5.2",
+    "@types/ws": "^8.18.1",
+    "eslint": "^9.36.0",
     "nodemon": "^3.1.10",
-    "ws": "^8.18.3"
+    "prettier": "^3.6.2",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.9.2"
   },
   "dependencies": {
     "@microsoft/signalr": "^9.0.6",
+    "axios": "^1.10.0",
+    "cors": "^2.8.5",
     "dotenv": "^17.2.2",
+    "express": "^5.1.0",
     "ical": "^0.8.0",
-    "tough-cookie": "^6.0.0"
+    "tough-cookie": "^6.0.0",
+    "ws": "^8.18.3"
   }
 }
