@@ -10,6 +10,7 @@ class WebSocketClient extends EventEmitter {
     constructor() {
         super()
         this.state = stateProcessor.getInstance()
+        this.setMaxListeners(0);
     }
 
     broadcast(data: any) {
