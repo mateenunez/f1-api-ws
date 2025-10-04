@@ -114,36 +114,40 @@ class StateProcessor {
 
       case "SessionInfo":
         if (this.fullState?.R?.SessionInfo) {
-          this.fullState.R.TimingAppData = null;
-          this.fullState.R.TyreStintSeries = null;
-          Object.keys(this.fullState.R.TimingData.Lines).forEach((key) => {
-            if (
-              this.fullState.R.TimingData.Lines[key] &&
-              typeof this.fullState.R.TimingData.Lines[key] === "object"
-            ) {
-              this.fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
-              this.fullState.R.TimingData.Lines[key].GapToLeader = "";
-              this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead = "";
-              this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
-              this.fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
-              this.fullState.R.TimingData.Lines[key].Stats = [];
-              this.fullState.R.TimingData.Lines[key].Retired = false;
-              this.fullState.R.TimingData.Lines[key].KnockedOut = false;
-            }
-          });
-          Object.keys(this.fullState.R.TimingStats.Lines).forEach((key) => {
-            if (
-              this.fullState.R.TimingStats.Lines[key] &&
-              typeof this.fullState.R.TimingStats.Lines[key] === "object"
-            ) {
-              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Value =
-                "";
-              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap = "";
-              this.fullState.R.TimingStats.Lines[
-                key
-              ].PersonalBestLapTime.Position = "";
-            }
-          });
+          if (data.SessionStatus === "Inactive") {
+            this.fullState.R.TimingAppData = null;
+            this.fullState.R.TyreStintSeries = null;
+            this.fullState.R.RaceControlMessages = null;
+            this.fullState.R.TeamRadio = null;
+            Object.keys(this.fullState.R.TimingData.Lines).forEach((key) => {
+              if (
+                this.fullState.R.TimingData.Lines[key] &&
+                typeof this.fullState.R.TimingData.Lines[key] === "object"
+              ) {
+                this.fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
+                this.fullState.R.TimingData.Lines[key].GapToLeader = "";
+                this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead = "";
+                this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
+                this.fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
+                this.fullState.R.TimingData.Lines[key].Stats = [];
+                this.fullState.R.TimingData.Lines[key].Retired = false;
+                this.fullState.R.TimingData.Lines[key].KnockedOut = false;
+              }
+            });
+            Object.keys(this.fullState.R.TimingStats.Lines).forEach((key) => {
+              if (
+                this.fullState.R.TimingStats.Lines[key] &&
+                typeof this.fullState.R.TimingStats.Lines[key] === "object"
+              ) {
+                this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Value =
+                  "";
+                this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap = "";
+                this.fullState.R.TimingStats.Lines[
+                  key
+                ].PersonalBestLapTime.Position = "";
+              }
+            });
+          }
 
           this.deepMerge(this.fullState.R.SessionInfo, data);
         }
