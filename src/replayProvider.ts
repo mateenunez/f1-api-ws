@@ -39,14 +39,14 @@ export class ReplayProvider extends EventEmitter {
         initialStateJson.R.SessionInfo.GmtOffset = "00:00:00";
 
         // Initialize state with the first line
-        this.stateProcessor.updateState(lines.shift());
-        const firstMessageTimestamp = Date.parse(lines[0].M[0].A[2]);
+        this.stateProcessor.updateState(initialStateJson);
 
+        const firstMessageTimestamp = Date.parse(lines[1].M[0].A[2]);
         let lastProcessedTimestamp = firstMessageTimestamp;
 
         let firstQueuedMessageTimestamp: number | undefined = undefined;
 
-        for await (const line of lines) {
+        for await (const line of lines.slice(1)) {
             if (line.M) {
                 const messageTimestamp = Date.parse(line.M[0].A[2]);
                 if ((messageTimestamp - firstMessageTimestamp) < this.fastForwardSeconds * 1000) {
