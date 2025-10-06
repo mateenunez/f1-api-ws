@@ -1,22 +1,20 @@
-import { Server } from "http";
-import stateProcessor from "./stateProcessor";
-import WebSocket from "ws";
+import { Server as HttpServer } from "http";
+import { StateProvider } from "./stateProcessor";
+import { WebSocket, WebSocketServer } from "ws";
 import EventEmitter from "events";
 
-class WebSocketServer {
-  private state: any;
-  public wss: WebSocket.Server;
+class WebSocketTelemetryServer {
+  private wss: WebSocketServer;
 
-  constructor(server: Server, eventBus: EventEmitter) {
+  constructor(server: HttpServer, private stateProcessor: StateProvider, eventBus: EventEmitter) {
     if (!server) {
       throw new Error(
         "WebSocketServer requires an HTTP server as the first argument."
       );
     }
-    this.state = stateProcessor.getInstance();
 
-    this.wss = new WebSocket.Server({ server, clientTracking: true });
-    this.wss.on("connection", (ws) => {
+    this.wss = new WebSocketServer({ server, clientTracking: true });
+    this.wss.on("connection", (ws: WebSocket) => {
       const eventListener = (data: any) => {
         if (ws.readyState === WebSocket.OPEN) {
           ws.send(data);
@@ -25,7 +23,7 @@ class WebSocketServer {
 
       console.log("Clients connected: " + this.wss.clients.size)
 
-      const snapshot = this.state.getState();
+      const snapshot = this.stateProcessor.getState();
 
       if (snapshot != null) {
         const buffer = Buffer.from(JSON.stringify(snapshot));
@@ -41,4 +39,4 @@ class WebSocketServer {
   }
 }
 
-export default WebSocketServer;
+export { WebSocketTelemetryServer };
