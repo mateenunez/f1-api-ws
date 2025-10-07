@@ -1,15 +1,14 @@
 import EventEmitter from "events";
 import axios, { AxiosError } from "axios";
 import WebSocket from "ws";
-import stateProcessor from "./stateProcessor";
+import { StateProcessor } from "./stateProcessor";
 import { HttpTransportType, HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
 
-class WebSocketClient extends EventEmitter {
+class F1APIWebSocketsClient extends EventEmitter {
     public state: any;
 
-    constructor() {
+    constructor(protected readonly stateProcessor: StateProcessor) {
         super()
-        this.state = stateProcessor.getInstance()
         this.setMaxListeners(0);
     }
 
@@ -55,7 +54,7 @@ class WebSocketClient extends EventEmitter {
                 // Guardar ultima información de retransmisión
                 const parsedData = JSON.parse(data.toString());
                 if (parsedData.R) {
-                    this.state.updateState(parsedData);
+                    this.stateProcessor.updateState(parsedData);
                     console.log("Basic data subscription fullfilled");
                 }
 
@@ -174,4 +173,4 @@ class WebSocketClient extends EventEmitter {
     }
 }
 
-export default WebSocketClient;
+export { F1APIWebSocketsClient };

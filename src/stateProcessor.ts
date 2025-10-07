@@ -3,7 +3,11 @@ interface FullState {
   R: any
 }
 
-class StateProcessor {
+interface StateProvider {
+  getState(): FullState;
+}
+
+class StateProcessor implements StateProvider {
   fullState: FullState;
 
   constructor() {
@@ -196,15 +200,4 @@ class StateProcessor {
   }
 }
 
-// Singleton pattern
-let instance: any = null;
-
-export = {
-  StateProcessor,
-  getInstance: () => {
-    if (!instance) {
-      instance = new StateProcessor();
-    }
-    return instance;
-  }
-};
+export { StateProcessor, StateProvider };
