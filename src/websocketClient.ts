@@ -1,13 +1,13 @@
 import EventEmitter from "events";
-import axios, { AxiosError } from "axios";
+import axios, { AxiosResponse, AxiosError } from "axios";
 import WebSocket from "ws";
 import { StateProcessor } from "./stateProcessor";
 import { HttpTransportType, HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
 
 class F1APIWebSocketsClient extends EventEmitter {
-    public state: any;
+    private initAttempts = 0;
 
-    constructor(protected readonly stateProcessor: StateProcessor) {
+    constructor(protected readonly stateProcessor: StateProcessor, private maxInitAttempts: number = 5) {
         super()
         this.setMaxListeners(0);
     }
@@ -64,12 +64,12 @@ class F1APIWebSocketsClient extends EventEmitter {
                         if (update.H === "Streaming" && update.M === "feed") {
                             const [feedName, data, timestamp] = update.A;
 
-                            const snapshot = this.state.getState();
+                            const snapshot = this.stateProcessor.getState();
                             if (!snapshot || !snapshot.R) {
                                 return;
                             }
 
-                            this.state.processFeed(feedName, data, timestamp);
+                            this.stateProcessor.processFeed(feedName, data, timestamp);
                         }
                     });
                 }
@@ -123,7 +123,7 @@ class F1APIWebSocketsClient extends EventEmitter {
             .build();
 
         connection.on("feed", (feedName, data, timestamp) => {
-            this.state.processFeed(feedName, data, timestamp);
+            this.stateProcessor.processFeed(feedName, data, timestamp);
             const streamingData = {
                 M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
             };
@@ -162,13 +162,97 @@ class F1APIWebSocketsClient extends EventEmitter {
 
             if (subscriptionData) {
                 console.log("Premium data subscription fullfilled.");
-                this.state.updateStatePremium(subscriptionData);
+                this.stateProcessor.updateStatePremium(subscriptionData);
             }
 
             return connection;
         } catch (error) {
             console.error("Connection failed: ", error);
             throw error;
+        }
+    }
+
+    async init() {
+        try {
+            const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
+
+            try {
+                const negotiation = await this.premiumNegotiation(subscriptionToken);
+
+                const cookies = negotiation.headers["set-cookie"] ?? [];
+
+                if (negotiation && negotiation.status === 200) {
+                    if (negotiation.headers)
+                        await this.premiumWebsocketConnect(
+                            subscriptionToken,
+                            cookies
+                        );
+                    return;
+                }
+            } catch (premiumError) {
+                console.warn("Premium connection failed: ", premiumError);
+            }
+
+            try {
+                console.log("Started common negotiation.");
+
+                const negotiationResponse = await this.commonNegotiation();
+
+                const cookies: string[] = negotiationResponse.headers["set-cookie"] ?? [];
+
+                const cookieString = cookies
+                    .map((cookie) => cookie.split(";")[0].trim())
+                    .join("; ");
+
+                const sock = await this.commonWebSocketConnection(
+                    negotiationResponse.data["ConnectionToken"],
+                    cookieString
+                );
+
+                sock.send(
+                    JSON.stringify({
+                        H: "Streaming",
+                        M: "Subscribe",
+                        A: [
+                            [
+                                "Heartbeat",
+                                "CarData",
+                                "Position",
+                                "ExtrapolatedClock",
+                                "TopThree",
+                                "TimingStats",
+                                "TimingAppData",
+                                "WeatherData",
+                                "TrackStatus",
+                                "DriverList",
+                                "RaceControlMessages",
+                                "SessionInfo",
+                                "SessionData",
+                                "LapCount",
+                                "TimingData",
+                                "TyreStintSeries",
+                                "TeamRadio",
+                                "CarData.z",
+                                "Position.z",
+                            ],
+                        ],
+                        I: 1,
+                    })
+                );
+            } catch (commonError) {
+                console.error("Common connection failed:", commonError);
+            }
+        } catch (error) {
+            if (this.initAttempts < this.maxInitAttempts) {
+                console.log("Attempting to reconnect...");
+                const delay = Math.pow(2, this.initAttempts) * 1000
+                setTimeout(() => {
+                    this.initAttempts++;
+                    this.init();
+                }, delay);
+            } else {
+                console.log("Max reconnect attempts reached.", error);
+            }
         }
     }
 }
