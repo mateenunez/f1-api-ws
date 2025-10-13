@@ -69,6 +69,13 @@ class F1APIWebSocketsClient extends EventEmitter {
                                 return;
                             }
 
+                            //   Deberíamos ver acá si el feedName es RaceControlMessages y hacer la traducción?
+                            
+                            //   const raceControlMessage = data;
+                            //   const messages = data.Messages;
+                            //   const messagesArray: RaceControlMessage[] = Object.values(messages);
+                            //   const dataWithTranslation = this.translationService.translate(messagesArray[0].Message);
+
                             this.stateProcessor.processFeed(feedName, data, timestamp);
                         }
                     });
