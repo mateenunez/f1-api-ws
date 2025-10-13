@@ -1,3 +1,4 @@
+import { TranslationService } from "./translationService";
 
 interface FullState {
   R: any
@@ -10,7 +11,7 @@ interface StateProvider {
 class StateProcessor implements StateProvider {
   fullState: FullState;
 
-  constructor() {
+  constructor(private translationService: TranslationService) {
     this.fullState = { R: {} };
   }
 
@@ -116,6 +117,14 @@ class StateProcessor implements StateProvider {
         }
         break;
 
+      case "RaceControlMessagesEs":
+        if (this.fullState?.R?.RaceControlMessagesEs) {
+          this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
+        } else {
+          this.fullState.R.RaceControlMessagesEs = data;
+        }
+        break;
+
       case "SessionInfo":
         if (this.fullState?.R?.SessionInfo) {
           if (data.SessionStatus === "Inactive") {
@@ -197,6 +206,29 @@ class StateProcessor implements StateProvider {
         console.warn(`Feed "${feedName}" not recognized.`);
     }
 
+  }
+
+  async processRaceControlMessagesEs(Messages: any[]) {
+    if (!this.fullState.R) {
+      return;
+    }
+
+    const messageList: string[] = [];
+
+    let messages = Object.values(Messages);
+    messages.forEach((obj) => {
+      messageList.push(obj.Message);
+    })
+
+    const translatedMessages = await this.translationService.translateBulk(messageList);
+
+    messages.forEach((obj, idx) => {
+      obj.Message = translatedMessages[idx];
+    })
+
+    const data = { Messages: messages };
+
+    this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
   }
 }
 

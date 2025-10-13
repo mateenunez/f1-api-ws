@@ -1,13 +1,14 @@
 import EventEmitter from "events";
-import axios, { AxiosResponse, AxiosError } from "axios";
+import axios, { AxiosError } from "axios";
 import WebSocket from "ws";
 import { StateProcessor } from "./stateProcessor";
 import { HttpTransportType, HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
+import { TranslationService } from "./translationService";
 
 class F1APIWebSocketsClient extends EventEmitter {
     private initAttempts = 0;
 
-    constructor(protected readonly stateProcessor: StateProcessor, private maxInitAttempts: number = 5) {
+    constructor(protected readonly stateProcessor: StateProcessor, private translationService: TranslationService, private maxInitAttempts: number = 5) {
         super()
         this.setMaxListeners(0);
     }
@@ -50,12 +51,14 @@ class F1APIWebSocketsClient extends EventEmitter {
                 res(sock);
             });
 
-            sock.on("message", (data) => {
+            sock.on("message", async (data) => {
                 // Guardar ultima información de retransmisión
                 const parsedData = JSON.parse(data.toString());
                 if (parsedData.R) {
                     this.stateProcessor.updateState(parsedData);
                     console.log("Basic data subscription fullfilled");
+
+                    this.stateProcessor.processRaceControlMessagesEs(parsedData.R.RaceControlMessages.Messages);
                 }
 
                 // Actualizar el estado de la variable on connection data
@@ -69,14 +72,25 @@ class F1APIWebSocketsClient extends EventEmitter {
                                 return;
                             }
 
-                            //   Deberíamos ver acá si el feedName es RaceControlMessages y hacer la traducción?
-                            
-                            //   const raceControlMessage = data;
-                            //   const messages = data.Messages;
-                            //   const messagesArray: RaceControlMessage[] = Object.values(messages);
-                            //   const dataWithTranslation = this.translationService.translate(messagesArray[0].Message);
-
                             this.stateProcessor.processFeed(feedName, data, timestamp);
+
+                            if (feedName === "RaceControlMessages") {
+                                const raceControlMessage = data;
+                                let object: any = Object.values(raceControlMessage.Messages)[0];
+                                const latestMessage: string = object.Message;
+                                this.translationService.translate(latestMessage).then(
+                                    (translation) => {
+                                        object.Message = translation;
+
+                                        const translateData = { "Messages": object };
+                                        this.stateProcessor.processFeed(feedName + "Es", translateData, timestamp);
+
+                                        const streamingData = { "M": [{ "H": "Streaming", "M": "feed", "A": [feedName + "Es", translateData, timestamp] }] }
+                                        this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+                                    }
+                                );
+
+                            }
                         }
                     });
                 }
