@@ -21,7 +21,7 @@ async function main() {
 
   app.use("/", router);
 
-  const translationService = new TranslationService(process.env.TRANSLATION_KEY || ""); // Service de traducción usando Gemini API.
+  const translationService = new TranslationService(); // Service de traducción usando Gemini API.
 
   const stateProcessor = new StateProcessor(translationService); // Procesa y mantiene el estado de la sesión actual.
 

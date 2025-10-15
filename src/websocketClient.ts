@@ -52,13 +52,11 @@ class F1APIWebSocketsClient extends EventEmitter {
             });
 
             sock.on("message", async (data) => {
-                // Guardar ultima información de retransmisión
                 const parsedData = JSON.parse(data.toString());
                 if (parsedData.R) {
                     this.stateProcessor.updateState(parsedData);
-                    console.log("Basic data subscription fullfilled");
-
                     this.stateProcessor.processRaceControlMessagesEs(parsedData.R.RaceControlMessages.Messages);
+                    console.log("Basic data subscription fullfilled");
                 }
 
                 // Actualizar el estado de la variable on connection data
@@ -75,21 +73,7 @@ class F1APIWebSocketsClient extends EventEmitter {
                             this.stateProcessor.processFeed(feedName, data, timestamp);
 
                             if (feedName === "RaceControlMessages") {
-                                const raceControlMessage = data;
-                                let object: any = Object.values(raceControlMessage.Messages)[0];
-                                const latestMessage: string = object.Message;
-                                this.translationService.translate(latestMessage).then(
-                                    (translation) => {
-                                        object.Message = translation;
-
-                                        const translateData = { "Messages": object };
-                                        this.stateProcessor.processFeed(feedName + "Es", translateData, timestamp);
-
-                                        const streamingData = { "M": [{ "H": "Streaming", "M": "feed", "A": [feedName + "Es", translateData, timestamp] }] }
-                                        this.broadcast(Buffer.from(JSON.stringify(streamingData)));
-                                    }
-                                );
-
+                                this.receivedRaceControlMessage(feedName, data, timestamp);
                             }
                         }
                     });
@@ -149,6 +133,10 @@ class F1APIWebSocketsClient extends EventEmitter {
                 M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
             };
             this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+
+            if (feedName === "RaceControlMessages") {
+                this.receivedRaceControlMessage(feedName, data, timestamp);
+            }
         });
 
         connection.onclose((error) => {
@@ -182,8 +170,9 @@ class F1APIWebSocketsClient extends EventEmitter {
             ]);
 
             if (subscriptionData) {
-                console.log("Premium data subscription fullfilled.");
                 this.stateProcessor.updateStatePremium(subscriptionData);
+                this.stateProcessor.processRaceControlMessagesEs(subscriptionData.RaceControlMessages.Messages);
+                console.log("Premium data subscription fullfilled.");
             }
 
             return connection;
@@ -191,6 +180,24 @@ class F1APIWebSocketsClient extends EventEmitter {
             console.error("Connection failed: ", error);
             throw error;
         }
+    }
+
+    async receivedRaceControlMessage(feedName: string, data: any, timestamp: string) {
+        const raceControlMessage = data;
+        let object: any = Object.values(raceControlMessage.Messages)[0];
+        const latestMessage: string = object.Message;
+        this.translationService.translate(latestMessage).then(
+            (translation) => {
+                object.Message = translation;
+
+                const translateData = { "Messages": object };
+                this.stateProcessor.processFeed(feedName + "Es", translateData, timestamp);
+
+                const streamingData = { "M": [{ "H": "Streaming", "M": "feed", "A": [feedName + "Es", translateData, timestamp] }] }
+                this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+            }
+        );
+
     }
 
     async init() {

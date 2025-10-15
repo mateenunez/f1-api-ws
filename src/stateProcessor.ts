@@ -121,7 +121,8 @@ class StateProcessor implements StateProvider {
         if (this.fullState?.R?.RaceControlMessagesEs) {
           this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
         } else {
-          this.fullState.R.RaceControlMessagesEs = data;
+          this.fullState.R.RaceControlMessagesEs = { Messages: [] };
+          this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
         }
         break;
 
@@ -228,7 +229,7 @@ class StateProcessor implements StateProvider {
 
     const data = { Messages: messages };
 
-    this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
+    this.fullState.R.RaceControlMessagesEs = data;
   }
 }
 

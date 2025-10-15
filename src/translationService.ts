@@ -1,15 +1,13 @@
-import { GoogleGenAI } from "@google/genai";
+import { GoogleGenAI, Type } from "@google/genai";
 
 interface TranslationProvider {
     translate(message: string, targetLanguage: string): Promise<string | undefined>
 }
 
 class TranslationService implements TranslationProvider {
-    private api_key: string;
     ai: GoogleGenAI;
 
-    constructor(private key: string) {
-        this.api_key = key;
+    constructor() {
         this.ai = new GoogleGenAI({});
     }
 
@@ -37,10 +35,10 @@ class TranslationService implements TranslationProvider {
             config: {
                 responseMimeType: "application/json", // Indica que la respuesta es JSON
                 responseSchema: {
-                    type: Array,
+                    type: Type.ARRAY,
                     description: "List of translated messages",
                     items: {
-                        type: String,
+                        type: Type.STRING,
                     }
                 }
             }
