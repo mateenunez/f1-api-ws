@@ -21,7 +21,7 @@ class TranslationService implements TranslationProvider {
                     systemInstruction: "You are a translation engine for Formula 1 team radio messages, you have to return the translated message only, without any additional text."
                 }
             })
-            return response.text || "";
+            return response.text || undefined;
         } catch (error) {
             console.log("Translation error:", error)
         }

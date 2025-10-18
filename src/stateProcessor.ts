@@ -216,22 +216,27 @@ class StateProcessor implements StateProvider {
       ? Messages.map((m: any, i: number) => [String(i), m])
       : Object.entries(Messages);
 
-    const translatedPairs = await Promise.all(
-      entries.map(async ([key, msg]: any) => {
-        const copy = { ...(msg ?? {}) };
-        try {
-          copy.Message = await this.translationService.translate(copy.Message ?? "");
-        } catch {
+    const originals = entries.map(([, msg]) => (msg?.Message ?? ""));
 
-        }
-        return [key, copy] as [string, any];
-      })
-    );
+    let translatedArray: (string | undefined)[] = [];
+    try {
+      translatedArray = await this.translationService.translateBulk(originals);
+      if (!Array.isArray(translatedArray) || translatedArray.length !== originals.length) {
+        translatedArray = originals.slice();
+      }
+    } catch (e) {
+      translatedArray = originals.slice();
+    }
 
     const newMessages: any = isArray ? [] : {};
-    translatedPairs.forEach(([key, msg]) => {
-      if (isArray) newMessages[Number(key)] = msg;
-      else newMessages[key] = msg;
+    entries.forEach(([key, msg], idx) => {
+      const copy = { ...(msg ?? {}) }; 
+     copy.Message = translatedArray[idx] ?? "";
+      if (isArray) {
+        newMessages[Number(key)] = copy;
+      } else {
+        newMessages[key] = copy;
+      }
     });
 
     this.fullState.R.RaceControlMessagesEs = { Messages: newMessages };
