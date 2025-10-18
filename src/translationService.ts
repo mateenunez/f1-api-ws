@@ -21,7 +21,7 @@ class TranslationService implements TranslationProvider {
                     systemInstruction: "You are a translation engine for Formula 1 team radio messages, you have to return the translated message only, without any additional text."
                 }
             })
-            return response.text;
+            return response.text || "";
         } catch (error) {
             console.log("Translation error:", error)
         }
@@ -45,7 +45,7 @@ class TranslationService implements TranslationProvider {
         })
 
         try {
-            if (!response.text) return Error("No response from translation API") as any;
+            if (!response.text) return [];
             const translatedArray = JSON.parse(response.text);
             return translatedArray as string[];
         } catch (e) {
