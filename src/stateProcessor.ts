@@ -1,3 +1,4 @@
+import { TranslationService } from "./translationService";
 
 interface FullState {
   R: any
@@ -10,8 +11,10 @@ interface StateProvider {
 class StateProcessor implements StateProvider {
   fullState: FullState;
 
-  constructor() {
-    this.fullState = { R: {} };
+  constructor(private translationService: TranslationService) {
+    this.fullState = {
+      R: {}
+    };
   }
 
   getState() {
@@ -116,6 +119,12 @@ class StateProcessor implements StateProvider {
         }
         break;
 
+      case "RaceControlMessagesEs":
+        if (this.fullState?.R?.RaceControlMessagesEs) {
+          this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
+        }
+        break;
+
       case "SessionInfo":
         if (this.fullState?.R?.SessionInfo) {
           if (data.SessionStatus === "Inactive") {
@@ -197,6 +206,40 @@ class StateProcessor implements StateProvider {
         console.warn(`Feed "${feedName}" not recognized.`);
     }
 
+  }
+
+  async processRaceControlMessagesEs(Messages: any) {
+    if (!this.fullState.R || !Messages) return;
+
+    const isArray = Array.isArray(Messages);
+    const entries: [string, any][] = isArray
+      ? Messages.map((m: any, i: number) => [String(i), m])
+      : Object.entries(Messages);
+
+    const originals = entries.map(([, msg]) => (msg?.Message ?? ""));
+
+    let translatedArray: (string | undefined)[] = [];
+    try {
+      translatedArray = await this.translationService.translateBulk(originals);
+      if (!Array.isArray(translatedArray) || translatedArray.length !== originals.length) {
+        translatedArray = originals.slice();
+      }
+    } catch (e) {
+      translatedArray = originals.slice();
+    }
+
+    const newMessages: any = isArray ? [] : {};
+    entries.forEach(([key, msg], idx) => {
+      const copy = { ...(msg ?? {}) }; 
+     copy.Message = translatedArray[idx] ?? "";
+      if (isArray) {
+        newMessages[Number(key)] = copy;
+      } else {
+        newMessages[key] = copy;
+      }
+    });
+
+    this.fullState.R.RaceControlMessagesEs = { Messages: newMessages };
   }
 }
 
