@@ -12,7 +12,9 @@ class StateProcessor implements StateProvider {
   fullState: FullState;
 
   constructor(private translationService: TranslationService) {
-    this.fullState = { R: {} };
+    this.fullState = {
+      R: {}
+    };
   }
 
   getState() {
@@ -120,9 +122,6 @@ class StateProcessor implements StateProvider {
       case "RaceControlMessagesEs":
         if (this.fullState?.R?.RaceControlMessagesEs) {
           this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
-        } else {
-          this.fullState.R.RaceControlMessagesEs = { Messages: [] };
-          this.deepMerge(this.fullState.R.RaceControlMessagesEs, data);
         }
         break;
 
@@ -209,27 +208,33 @@ class StateProcessor implements StateProvider {
 
   }
 
-  async processRaceControlMessagesEs(Messages: any[]) {
-    if (!this.fullState.R) {
-      return;
-    }
+  async processRaceControlMessagesEs(Messages: any) {
+    if (!this.fullState.R || !Messages) return;
 
-    const messageList: string[] = [];
+    const isArray = Array.isArray(Messages);
+    const entries: [string, any][] = isArray
+      ? Messages.map((m: any, i: number) => [String(i), m])
+      : Object.entries(Messages);
 
-    let messages = Object.values(Messages);
-    messages.forEach((obj) => {
-      messageList.push(obj.Message);
-    })
+    const translatedPairs = await Promise.all(
+      entries.map(async ([key, msg]: any) => {
+        const copy = { ...(msg ?? {}) };
+        try {
+          copy.Message = await this.translationService.translate(copy.Message ?? "");
+        } catch {
 
-    const translatedMessages = await this.translationService.translateBulk(messageList);
+        }
+        return [key, copy] as [string, any];
+      })
+    );
 
-    messages.forEach((obj, idx) => {
-      obj.Message = translatedMessages[idx];
-    })
+    const newMessages: any = isArray ? [] : {};
+    translatedPairs.forEach(([key, msg]) => {
+      if (isArray) newMessages[Number(key)] = msg;
+      else newMessages[key] = msg;
+    });
 
-    const data = { Messages: messages };
-
-    this.fullState.R.RaceControlMessagesEs = data;
+    this.fullState.R.RaceControlMessagesEs = { Messages: newMessages };
   }
 }
 

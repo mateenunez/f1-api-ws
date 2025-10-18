@@ -183,92 +183,185 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
 
     async receivedRaceControlMessage(feedName: string, data: any, timestamp: string) {
-        const raceControlMessage = data;
-        let object: any = Object.values(raceControlMessage.Messages)[0];
-        const latestMessage: string = object.Message;
-        this.translationService.translate(latestMessage).then(
-            (translation) => {
-                object.Message = translation;
+        try {
+            const messagesObj = data?.Messages ?? data;
+            if (!messagesObj || typeof messagesObj !== "object") return;
 
-                const translateData = { "Messages": object };
-                this.stateProcessor.processFeed(feedName + "Es", translateData, timestamp);
+            const entries = Object.entries(messagesObj);
+            const translatePromises = entries.map(([key, msgObj]: any) =>
+                this.translationService
+                    .translate(msgObj?.Message ?? "")
+                    .then((translation) => ({ key, msg: { ...(msgObj ?? {}), Message: translation } }))
+                    .catch(() => ({ key, msg: { ...(msgObj ?? {}) } }))
+            );
 
-                const streamingData = { "M": [{ "H": "Streaming", "M": "feed", "A": [feedName + "Es", translateData, timestamp] }] }
-                this.broadcast(Buffer.from(JSON.stringify(streamingData)));
-            }
-        );
+            const translated = await Promise.all(translatePromises);
 
+            const newMessages: Record<string, any> = {};
+            translated.forEach(({ key, msg }) => {
+                newMessages[key] = msg;
+            });
+
+            const translateData = { Messages: newMessages };
+
+            this.stateProcessor.processFeed(feedName + "Es", translateData, timestamp);
+
+            const streamingData = {
+                M: [{ H: "Streaming", M: "feed", A: [feedName + "Es", translateData, timestamp] }],
+            };
+            this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+        } catch (err) {
+            console.error("Error in receivedRaceControlMessage:", err);
+        }
+    }
+
+    async localDebugWebsocketConnect(url: string): Promise<WebSocket> {
+
+        return new Promise((res, rej) => {
+            const sock = new WebSocket(url, {
+                headers: {
+                    "User-Agent": "BestHTTP",
+                    "Accept-Encoding": "gzip,identity",
+                },
+            });
+
+            sock.on("open", () => {
+                console.log("Connected to local debug websocket:", url);
+                res(sock);
+            });
+
+            sock.on("message", (data) => {
+                let parsedData: any;
+                try {
+                    parsedData = JSON.parse(data.toString());
+                } catch (err) {
+                    console.error("Error parsing message from local ws:", err);
+                    return;
+                }
+
+                if (parsedData.R) {
+                    this.stateProcessor.updateState(parsedData); const engMessages = parsedData.R?.RaceControlMessages?.Messages;
+                    if (engMessages) {
+                        const cloned = JSON.parse(JSON.stringify(engMessages));
+                        this.stateProcessor.processRaceControlMessagesEs(cloned);
+                    }
+                    console.log("Local debug: full state received/updated.");
+                }
+
+                if (Array.isArray(parsedData.M)) {
+                    parsedData.M.forEach((update: any) => {
+                        if (update.H === "Streaming" && update.M === "feed") {
+                            const [feedName, feedData, timestamp] = update.A;
+
+                            const snapshot = this.stateProcessor.getState();
+                            if (!snapshot || !snapshot.R) return;
+
+                            this.stateProcessor.processFeed(feedName, feedData, timestamp);
+
+                            if (feedName === "RaceControlMessages") {
+                                this.receivedRaceControlMessage(feedName, feedData, timestamp);
+                            }
+                        }
+                    });
+                }
+
+                try {
+                    this.broadcast(Buffer.from(JSON.stringify(parsedData)));
+                } catch (e) {
+                    console.error("Error broadcasting local debug message:", e);
+                }
+            });
+
+            sock.on("error", (err) => {
+                console.error("Local websocket error:", err);
+                rej(err);
+            });
+
+            sock.on("close", (code, reason) => {
+                console.log("Local websocket closed:", code, reason?.toString?.() ?? reason);
+            });
+        });
     }
 
     async init() {
         try {
             const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
 
-            try {
-                const negotiation = await this.premiumNegotiation(subscriptionToken);
-
-                const cookies = negotiation.headers["set-cookie"] ?? [];
-
-                if (negotiation && negotiation.status === 200) {
-                    if (negotiation.headers)
-                        await this.premiumWebsocketConnect(
-                            subscriptionToken,
-                            cookies
-                        );
-                    return;
+            if (process.env.LOCALHOST_WEBSOCKET) {
+                const url = process.env.LOCALHOST_WEBSOCKET;
+                try {
+                    await this.localDebugWebsocketConnect(url);
+                } catch (localError) {
+                    console.warn("Local debug connection failed: ", localError);
                 }
-            } catch (premiumError) {
-                console.warn("Premium connection failed: ", premiumError);
-            }
+            } else {
 
-            try {
-                console.log("Started common negotiation.");
+                try {
+                    const negotiation = await this.premiumNegotiation(subscriptionToken);
 
-                const negotiationResponse = await this.commonNegotiation();
+                    const cookies = negotiation.headers["set-cookie"] ?? [];
 
-                const cookies: string[] = negotiationResponse.headers["set-cookie"] ?? [];
+                    if (negotiation && negotiation.status === 200) {
+                        if (negotiation.headers)
+                            await this.premiumWebsocketConnect(
+                                subscriptionToken,
+                                cookies
+                            );
+                        return;
+                    }
+                } catch (premiumError) {
+                    console.warn("Premium connection failed: ", premiumError);
+                }
 
-                const cookieString = cookies
-                    .map((cookie) => cookie.split(";")[0].trim())
-                    .join("; ");
+                try {
+                    console.log("Started common negotiation.");
 
-                const sock = await this.commonWebSocketConnection(
-                    negotiationResponse.data["ConnectionToken"],
-                    cookieString
-                );
+                    const negotiationResponse = await this.commonNegotiation();
 
-                sock.send(
-                    JSON.stringify({
-                        H: "Streaming",
-                        M: "Subscribe",
-                        A: [
-                            [
-                                "Heartbeat",
-                                "CarData",
-                                "Position",
-                                "ExtrapolatedClock",
-                                "TopThree",
-                                "TimingStats",
-                                "TimingAppData",
-                                "WeatherData",
-                                "TrackStatus",
-                                "DriverList",
-                                "RaceControlMessages",
-                                "SessionInfo",
-                                "SessionData",
-                                "LapCount",
-                                "TimingData",
-                                "TyreStintSeries",
-                                "TeamRadio",
-                                "CarData.z",
-                                "Position.z",
+                    const cookies: string[] = negotiationResponse.headers["set-cookie"] ?? [];
+
+                    const cookieString = cookies
+                        .map((cookie) => cookie.split(";")[0].trim())
+                        .join("; ");
+
+                    const sock = await this.commonWebSocketConnection(
+                        negotiationResponse.data["ConnectionToken"],
+                        cookieString
+                    );
+
+                    sock.send(
+                        JSON.stringify({
+                            H: "Streaming",
+                            M: "Subscribe",
+                            A: [
+                                [
+                                    "Heartbeat",
+                                    "CarData",
+                                    "Position",
+                                    "ExtrapolatedClock",
+                                    "TopThree",
+                                    "TimingStats",
+                                    "TimingAppData",
+                                    "WeatherData",
+                                    "TrackStatus",
+                                    "DriverList",
+                                    "RaceControlMessages",
+                                    "SessionInfo",
+                                    "SessionData",
+                                    "LapCount",
+                                    "TimingData",
+                                    "TyreStintSeries",
+                                    "TeamRadio",
+                                    "CarData.z",
+                                    "Position.z",
+                                ],
                             ],
-                        ],
-                        I: 1,
-                    })
-                );
-            } catch (commonError) {
-                console.error("Common connection failed:", commonError);
+                            I: 1,
+                        })
+                    );
+                } catch (commonError) {
+                    console.error("Common connection failed:", commonError);
+                }
             }
         } catch (error) {
             if (this.initAttempts < this.maxInitAttempts) {
