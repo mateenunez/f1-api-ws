@@ -18,7 +18,7 @@ class TranslationService implements TranslationProvider {
                 model: "gemini-2.5-flash",
                 contents: prompt,
                 config: {
-                    systemInstruction: "You are a translation engine for Formula 1 team radio messages, you have to return the translated message only, without any additional text."
+                    systemInstruction: `You are a translation engine for Formula 1 team radio messages, you have to return in upper case the translated message only in the indicated language: ${targetLanguage}, keeping the text simple but understandable.`
                 }
             })
             return response.text || undefined;
@@ -28,7 +28,7 @@ class TranslationService implements TranslationProvider {
     }
 
     async translateBulk(messages: string[], targetLanguage: string = "spanish"): Promise<(string | undefined)[]> {
-        const prompt = `Translate the following messages to ${targetLanguage}. Return only the translations in a JSON array format without any additional text: ${JSON.stringify(messages)}`;
+        const prompt = `Translate the following messages to ${targetLanguage}. Return only the translations in a JSON array format in upper case without any additional text: ${JSON.stringify(messages)}`;
         const response = await this.ai.models.generateContent({
             model: "gemini-2.5-flash",
             contents: prompt,
@@ -40,7 +40,8 @@ class TranslationService implements TranslationProvider {
                     items: {
                         type: Type.STRING,
                     }
-                }
+                },
+                systemInstruction: `You are a translation engine for Formula 1 team radio messages, you have to return in upper case the translated message only in the indicated language: ${targetLanguage}, keeping the text simple but understandable.`
             }
         })
 
