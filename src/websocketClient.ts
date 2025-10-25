@@ -55,7 +55,7 @@ class F1APIWebSocketsClient extends EventEmitter {
                 const parsedData = JSON.parse(data.toString());
                 if (parsedData.R) {
                     this.stateProcessor.updateState(parsedData);
-                    this.stateProcessor.processRaceControlMessagesEs(parsedData.R.RaceControlMessages.Messages || []);
+                    this.stateProcessor.processRaceControlMessagesEs(parsedData.R?.RaceControlMessages?.Messages ?? []);
                     console.log("Basic data subscription fullfilled");
                 }
 
@@ -171,7 +171,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
             if (subscriptionData) {
                 this.stateProcessor.updateStatePremium(subscriptionData);
-                this.stateProcessor.processRaceControlMessagesEs(subscriptionData.RaceControlMessages.Messages || []);
+                this.stateProcessor.processRaceControlMessagesEs(subscriptionData.RaceControlMessages?.Messages ?? []);
                 console.log("Premium data subscription fullfilled.");
             }
 
@@ -240,11 +240,12 @@ class F1APIWebSocketsClient extends EventEmitter {
                 }
 
                 if (parsedData.R) {
-                    this.stateProcessor.updateState(parsedData); const engMessages = parsedData.R?.RaceControlMessages?.Messages;
+                    this.stateProcessor.updateState(parsedData);
+                    const engMessages = parsedData.R?.RaceControlMessages?.Messages;
                     if (engMessages) {
                         const cloned = JSON.parse(JSON.stringify(engMessages));
-                        this.stateProcessor.processRaceControlMessagesEs(cloned || []);
-                    }
+                        this.stateProcessor.processRaceControlMessagesEs(cloned);
+                    } else this.stateProcessor.processRaceControlMessagesEs([]);
                     console.log("Local debug: full state received/updated.");
                 }
 
