@@ -27,6 +27,22 @@ class TranslationService implements TranslationProvider {
         }
     }
 
+    async translateTranscription(message: string, targetLanguage: string = "spanish"): Promise<string | undefined> {
+        try {
+            const prompt = `Translate the following message to ${targetLanguage}: "${message}"`;
+            const response = await this.ai.models.generateContent({
+                model: "gemini-2.5-flash",
+                contents: prompt,
+                config: {
+                    systemInstruction: `You are a translation engine for Formula 1 team radio audio messages, translate the text given to the language: ${targetLanguage}, keeping the text simple but understandable.`
+                }
+            })
+            return response.text || undefined;
+        } catch (error) {
+            console.log("Translation error:", error)
+        }
+    }
+
     async translateBulk(messages: string[], targetLanguage: string = "spanish"): Promise<(string | undefined)[]> {
         const prompt = `Translate the following messages to ${targetLanguage}. Return only the translations in a JSON array format in upper case without any additional text: ${JSON.stringify(messages)}`;
         const response = await this.ai.models.generateContent({

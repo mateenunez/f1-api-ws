@@ -4,11 +4,12 @@ import WebSocket from "ws";
 import { StateProcessor } from "./stateProcessor";
 import { HttpTransportType, HubConnection, HubConnectionBuilder, LogLevel } from "@microsoft/signalr";
 import { TranslationService } from "./translationService";
+import { TranscriptionService } from "./transcriptionService";
 
 class F1APIWebSocketsClient extends EventEmitter {
     private initAttempts = 0;
 
-    constructor(protected readonly stateProcessor: StateProcessor, private translationService: TranslationService, private maxInitAttempts: number = 5) {
+    constructor(protected readonly stateProcessor: StateProcessor, private translationService: TranslationService, private transcriptionService: TranscriptionService, private maxInitAttempts: number = 5) {
         super()
         this.setMaxListeners(0);
     }
@@ -75,6 +76,10 @@ class F1APIWebSocketsClient extends EventEmitter {
                             if (feedName === "RaceControlMessages") {
                                 this.receivedRaceControlMessage(feedName, data, timestamp);
                             }
+
+                            if (feedName === "TeamRadio") {
+                                this.receivedTeamRadio(feedName, data, timestamp, this.stateProcessor.getPath());
+                            }
                         }
                     });
                 }
@@ -136,6 +141,10 @@ class F1APIWebSocketsClient extends EventEmitter {
 
             if (feedName === "RaceControlMessages") {
                 this.receivedRaceControlMessage(feedName, data, timestamp);
+            }
+
+            if (feedName === "TeamRadio") {
+                this.receivedTeamRadio(feedName, data, timestamp, this.stateProcessor.getPath());
             }
         });
 
@@ -215,6 +224,53 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
     }
 
+    async receivedTeamRadio(feedName: string, data: any, timestamp: string, sessionPath: string) {
+        try {
+            const capturesObj = data?.Captures ?? data;
+            if (!capturesObj || typeof capturesObj !== "object") return;
+
+            const entries = Object.entries(capturesObj);
+            const promises = entries.map(async ([key, cap]: any) => {
+                const path = cap?.Path ?? cap?.path;
+                const utc = cap?.Utc ?? cap?.utc;
+                let transcription = "";
+
+                if (path && this.transcriptionService) {
+                    try {
+                        const fullPath = sessionPath + path;
+                        transcription = await this.transcriptionService.transcribe(fullPath);
+                    } catch (err) {
+                        console.error("Transcription error for path", path, err);
+                        transcription = "";
+                    }
+                }
+
+                const transcriptionEs = await this.translationService.translateTranscription(transcription);
+
+                const copy = { ...(cap ?? {}), Transcription: transcription, TranscriptionEs: transcriptionEs };
+                if (utc) copy.Utc = utc;
+                return [key, copy] as [string, any];
+            });
+
+            const results = await Promise.all(promises);
+            const newCaptures: Record<string, any> = {};
+            results.forEach(([key, cap]) => {
+                newCaptures[key] = cap;
+            });
+
+            const payload = { Captures: newCaptures };
+
+            this.stateProcessor.processFeed(feedName, payload, timestamp);
+
+            const streamingData = {
+                M: [{ H: "Streaming", M: "feed", A: [feedName, payload, timestamp] }],
+            };
+            this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+        } catch (err) {
+            console.error("Error in receivedTeamRadio:", err);
+        }
+    }
+
     async localDebugWebsocketConnect(url: string): Promise<WebSocket> {
 
         return new Promise((res, rej) => {
@@ -261,6 +317,10 @@ class F1APIWebSocketsClient extends EventEmitter {
 
                             if (feedName === "RaceControlMessages") {
                                 this.receivedRaceControlMessage(feedName, feedData, timestamp);
+                            }
+
+                            if (feedName === "TeamRadio") {
+                                this.receivedTeamRadio(feedName, feedData, timestamp, this.stateProcessor.getPath());
                             }
                         }
                     });

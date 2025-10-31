@@ -9,6 +9,7 @@ import router from "./api";
 import dotenv from "dotenv";
 import { EventEmitter } from "stream";
 import { TranslationService } from "./translationService";
+import { TranscriptionService } from "./transcriptionService";
 dotenv.config()
 
 async function main() {
@@ -22,6 +23,7 @@ async function main() {
   app.use("/", router);
 
   const translationService = new TranslationService(); // Service de traducción usando Gemini API.
+  const transcriptionService = new TranscriptionService() // Service de transcripción usando AssemblyAI API.
 
   const stateProcessor = new StateProcessor(translationService); // Procesa y mantiene el estado de la sesión actual.
 
@@ -33,7 +35,7 @@ async function main() {
     eventEmitter = replayProvider;
     replayProvider.run();
   } else {
-    const websocketClient = new F1APIWebSocketsClient(stateProcessor, translationService); // Realiza la conexión al WebSocket F1 y es el event bus.
+    const websocketClient = new F1APIWebSocketsClient(stateProcessor, translationService, transcriptionService); // Realiza la conexión al WebSocket F1 y es el event bus.
     websocketClient.init(); // async init
     eventEmitter = websocketClient;
   }

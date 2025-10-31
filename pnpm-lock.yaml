@@ -14,6 +14,9 @@ importers:
       '@microsoft/signalr':
         specifier: ^9.0.6
         version: 9.0.6
+      assemblyai:
+        specifier: ^4.18.5
+        version: 4.18.5
       axios:
         specifier: ^1.10.0
         version: 1.11.0
@@ -251,6 +254,10 @@ packages:
 
   argparse@2.0.1:
     resolution: {integrity: sha512-8+9WqebbFzpX9OR+Wa6O29asIogeRMzcGtAINdpMHHyAg10f05aSFVBbcEqGf/PXw1EjAZ+q2/bEBg3DvurK3Q==}
+
+  assemblyai@4.18.5:
+    resolution: {integrity: sha512-m7FCBZ+D3LAtaZoyatwDhjsdZbd2Qe8PXoRqsqvgIGSTwSSooDhC6KD88/6z+lqb+rEpou32Esy3FlM/IT/PLw==}
+    engines: {node: '>=18'}
 
   asynckit@0.4.0:
     resolution: {integrity: sha512-Oei9OH4tRh0YqU3GxhX79dM/mwVgvbZJaSNaRk+bshkj0S5cfHcgYakreBjrHwatXKbz+IoIdYLxrKim2MjW0Q==}
@@ -1296,6 +1303,13 @@ snapshots:
   arg@4.1.3: {}
 
   argparse@2.0.1: {}
+
+  assemblyai@4.18.5:
+    dependencies:
+      ws: 8.18.3
+    transitivePeerDependencies:
+      - bufferutil
+      - utf-8-validate
 
   asynckit@0.4.0: {}
 

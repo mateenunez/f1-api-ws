@@ -21,6 +21,10 @@ class StateProcessor implements StateProvider {
     return this.fullState;
   }
 
+  getPath() {
+    return this.fullState.R?.SessionInfo?.Path ?? "";
+  }
+
   updateState(newState: FullState) {
     this.fullState = newState;
   }
