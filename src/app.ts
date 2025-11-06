@@ -10,10 +10,10 @@ import dotenv from "dotenv";
 import { EventEmitter } from "stream";
 import { TranslationService } from "./translationService";
 import { TranscriptionService } from "./transcriptionService";
-dotenv.config()
+import { RedisClient } from "./redisClient";
+dotenv.config();
 
 async function main() {
-
   const app = express();
   const server = http.createServer(app);
   const PORT = 4000;
@@ -22,30 +22,40 @@ async function main() {
 
   app.use("/", router);
 
-  const translationService = new TranslationService(); // Service de traducción usando Gemini API.
-  const transcriptionService = new TranscriptionService() // Service de transcripción usando AssemblyAI API.
+  const translationService = new TranslationService(); // Translation service using Gemini API.
+  const transcriptionService = new TranscriptionService(); // Transcription service using AssemblyAI API.
+  const redisClient = new RedisClient(); // Redis client for storing and retrieving data.
 
-  const stateProcessor = new StateProcessor(translationService); // Procesa y mantiene el estado de la sesión actual.
+  const stateProcessor = new StateProcessor(redisClient); // Processes and maintains the state of the current session.
 
   let eventEmitter: EventEmitter;
 
   if (process.env.REPLAY_FILE) {
-    const fastForwardSeconds = parseInt(process.env.REPLAY_FAST_FORWARD_SECONDS || "0");
-    const replayProvider = new ReplayProvider(process.env.REPLAY_FILE, stateProcessor, fastForwardSeconds); // Reproduce un archivo de replay y actualiza el stateProcessor.
+    const fastForwardSeconds = parseInt(
+      process.env.REPLAY_FAST_FORWARD_SECONDS || "0"
+    );
+    const replayProvider = new ReplayProvider(
+      process.env.REPLAY_FILE,
+      stateProcessor,
+      fastForwardSeconds
+    ); // Plays a replay file and updates the stateProcessor.
     eventEmitter = replayProvider;
     replayProvider.run();
   } else {
-    const websocketClient = new F1APIWebSocketsClient(stateProcessor, translationService, transcriptionService); // Realiza la conexión al WebSocket F1 y es el event bus.
+    const websocketClient = new F1APIWebSocketsClient(
+      stateProcessor,
+      translationService,
+      transcriptionService
+    ); // Connects to the F1 WebSocket and acts as the event bus.
     websocketClient.init(); // async init
     eventEmitter = websocketClient;
   }
 
-  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter); // Maneja las conexiones de los clientes y escucha el event bus.
+  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter); // Handles client connections and listens to the event bus.
 
   server.listen(PORT, () => {
-    console.log("Server listening in port: " + PORT);
+    console.log("Server listening on port: " + PORT);
   });
-
 }
 
 main();

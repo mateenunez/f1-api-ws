@@ -1,7 +1,7 @@
-import { TranslationService } from "./translationService";
+import { RedisClient } from "./redisClient";
 
 interface FullState {
-  R: any
+  R: any;
 }
 
 interface StateProvider {
@@ -11,9 +11,9 @@ interface StateProvider {
 class StateProcessor implements StateProvider {
   fullState: FullState;
 
-  constructor(private translationService: TranslationService) {
+  constructor(private redis: RedisClient) {
     this.fullState = {
-      R: {}
+      R: {},
     };
   }
 
@@ -25,16 +25,137 @@ class StateProcessor implements StateProvider {
     return this.fullState.R?.SessionInfo?.Path ?? "";
   }
 
-  updateState(newState: FullState) {
-    this.fullState = newState;
+  getSessionId() {
+    return this.fullState.R.SessionInfo.Meeting.Key ?? "";
   }
 
-  updateStatePremium(newState: FullState) {
+  async saveToRedis(
+    feedName: string,
+    timestamp: string,
+    data: any
+  ): Promise<void> {
+    try {
+      const sessionId = this.getSessionId();
+      if (!sessionId) {
+        console.error("No session ID at saveToRedis");
+        return;
+      }
+
+      const serializedData = JSON.stringify(data);
+      await this.redis.save(sessionId, feedName, timestamp, serializedData);
+    } catch (err) {
+      console.error(`Error saving ${feedName} to Redis:`, err);
+    }
+  }
+
+  private getTimestampsFromFeed(
+    feedObj: any,
+    entriesKey = "Messages",
+    timestampField = "Utc"
+  ): string[] {
+    if (!feedObj) return [];
+
+    if (Array.isArray(feedObj[entriesKey])) {
+      return this.extractTimestampsFromArray(
+        feedObj[entriesKey],
+        timestampField
+      );
+    }
+
+    for (const k in feedObj) {
+      if (feedObj[k] && Array.isArray(feedObj[k][entriesKey])) {
+        return this.extractTimestampsFromArray(
+          feedObj[k][entriesKey],
+          timestampField
+        );
+      }
+    }
+
+    if (Array.isArray(feedObj)) {
+      return this.extractTimestampsFromArray(feedObj, timestampField);
+    }
+
+    return [];
+  }
+
+  private extractTimestampsFromArray(
+    arr: any[],
+    timestampField = "Utc"
+  ): string[] {
+    return arr
+      .map((m: any) =>
+        m?.[timestampField] != null ? String(m[timestampField]) : null
+      )
+      .filter((u: string | null): u is string => u !== null && u !== "");
+  }
+
+  getRaceControlMessageTimestamps(raceControlMessagesObj: any): string[] {
+    return this.getTimestampsFromFeed(
+      raceControlMessagesObj,
+      "Messages",
+      "Utc"
+    );
+  }
+
+  getTeamRadioTimestamps(teamRadioObj: any): string[] {
+    return this.getTimestampsFromFeed(teamRadioObj, "Captures", "Utc");
+  }
+
+  async getListFromRedis(
+    feedName: string
+  ): Promise<Array<{ timestamp: string | number; text: string | null }>> {
+    try {
+      const sessionId = this.getSessionId();
+      if (!sessionId) return [];
+
+      let timestamps: string[] = [];
+
+      if (feedName === "TeamRadio") {
+        timestamps = this.getTeamRadioTimestamps(this.fullState.R.TeamRadio);
+      } else {
+        timestamps = this.getRaceControlMessageTimestamps(
+          this.fullState.R.RaceControlMessages
+        );
+      }
+      if (!timestamps || timestamps.length === 0) return [];
+
+      const items = timestamps.map((t) => ({ timestamp: t }));
+      return (await this.redis.getList(sessionId, feedName, items)).filter(
+        (it) => it !== null
+      );
+    } catch (err) {
+      console.error(`Error fetching ${feedName} from Redis:`, err);
+      return [];
+    }
+  }
+
+  async updateRedis() {
+    const Messages = await this.getListFromRedis("RaceControlMessagesEs");
+    this.fullState.R.RaceControlMessagesEs = { Messages: Messages };
+    const redisCaptures = await this.getListFromRedis("TeamRadio");
+    const existingCaptures = this.fullState.R.TeamRadio?.Captures || [];
+    const mergedCaptures = existingCaptures.map((capture: any) => {
+      const redisCapture = redisCaptures.find(
+        (redisCapture: any) => capture.Utc === redisCapture.Utc
+      );
+      if (redisCapture) return redisCapture;
+      else return capture;
+    });
+    this.fullState.R.TeamRadio = { Captures: mergedCaptures };
+  }
+
+  async updateState(newState: FullState) {
+    this.fullState = newState;
+    await this.updateRedis();
+  }
+
+  async updateStatePremium(newState: FullState) {
     this.fullState.R = newState;
+    await this.updateRedis();
   }
 
   updatePartialState(path: string, data: any) {
-    if (path === 'R' && data) {
+    if (path === "R" && data) {
       this.fullState.R = data;
     } else {
       this.deepMerge(this.fullState, { [path]: data });
@@ -143,8 +264,10 @@ class StateProcessor implements StateProvider {
             ) {
               this.fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
               this.fullState.R.TimingData.Lines[key].GapToLeader = "";
-              this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead = "";
-              this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead = "";
+              this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead =
+                "";
+              this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead =
+                "";
               this.fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
               this.fullState.R.TimingData.Lines[key].Stats = [];
               this.fullState.R.TimingData.Lines[key].Retired = false;
@@ -156,9 +279,11 @@ class StateProcessor implements StateProvider {
               this.fullState.R.TimingStats.Lines[key] &&
               typeof this.fullState.R.TimingStats.Lines[key] === "object"
             ) {
-              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Value =
+              this.fullState.R.TimingStats.Lines[
+                key
+              ].PersonalBestLapTime.Value = "";
+              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap =
                 "";
-              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap = "";
               this.fullState.R.TimingStats.Lines[
                 key
               ].PersonalBestLapTime.Position = "";
@@ -210,41 +335,6 @@ class StateProcessor implements StateProvider {
       default:
         console.warn(`Feed "${feedName}" not recognized.`);
     }
-
-  }
-
-  async processRaceControlMessagesEs(Messages: any) {
-    if (!this.fullState.R || !Messages) return;
-
-    const isArray = Array.isArray(Messages);
-    const entries: [string, any][] = isArray
-      ? Messages.map((m: any, i: number) => [String(i), m])
-      : Object.entries(Messages);
-
-    const originals = entries.map(([, msg]) => (msg?.Message ?? ""));
-
-    let translatedArray: (string | undefined)[] = [];
-    try {
-      translatedArray = await this.translationService.translateBulk(originals);
-      if (!Array.isArray(translatedArray) || translatedArray.length !== originals.length) {
-        translatedArray = originals.slice();
-      }
-    } catch (e) {
-      translatedArray = originals.slice();
-    }
-
-    const newMessages: any = isArray ? [] : {};
-    entries.forEach(([key, msg], idx) => {
-      const copy = { ...(msg ?? {}) };
-      copy.Message = translatedArray[idx] ?? "";
-      if (isArray) {
-        newMessages[Number(key)] = copy;
-      } else {
-        newMessages[key] = copy;
-      }
-    });
-
-    this.fullState.R.RaceControlMessagesEs = { Messages: newMessages };
   }
 }
 
