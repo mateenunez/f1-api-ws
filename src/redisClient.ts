@@ -31,13 +31,21 @@ class RedisClient {
     return `${sessionId}:${feedName}:${timestamp}`;
   }
 
+  private removeMiliseconds(ts: string | number): string {
+    return String(ts).split(".")[0];
+  }
+
   async save(
     sessionId: string,
     feedName: string,
     timestamp: string | number,
     text: string
   ): Promise<void> {
-    const key = this.makeKey(sessionId, feedName, timestamp);
+    const key = this.makeKey(
+      sessionId,
+      feedName,
+      this.removeMiliseconds(timestamp)
+    );
     try {
       await this.client.set(key, text);
     } catch (err) {
