@@ -13,6 +13,8 @@ import { TranscriptionService } from "./transcriptionService";
 
 class F1APIWebSocketsClient extends EventEmitter {
   private initAttempts = 0;
+  private isInitializing = false;
+  private reconnectTimeout: NodeJS.Timeout | null = null;
 
   constructor(
     protected readonly stateProcessor: StateProcessor,
@@ -26,6 +28,31 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   broadcast(data: any) {
     this.emit("broadcast", data);
+  }
+
+  private scheduleReconnect() {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+    }
+
+    if (this.initAttempts < this.maxInitAttempts) {
+      console.log("Attempting to reconnect, attempt:", this.initAttempts + 1);
+      const delay = Math.pow(2, this.initAttempts) * 2000;
+      setTimeout(() => {
+        this.initAttempts++;
+        this.init();
+      }, delay);
+    } else {
+      console.log("Max reconnect attempts reached.");
+    }
+  }
+
+  private resetAttempts() {
+    this.initAttempts = 0;
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
   }
 
   async commonNegotiation() {
@@ -59,6 +86,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
       sock.on("open", () => {
         res(sock);
+        this.resetAttempts();
       });
 
       sock.on("message", async (data) => {
@@ -98,6 +126,20 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
 
         this.broadcast(data);
+      });
+
+      sock.on("error", (err) => {
+        console.error("Common websocket error:", err);
+        rej(err);
+      });
+
+      sock.on("close", (code, reason) => {
+        console.log(
+          "Common websocket closed:",
+          code,
+          reason?.toString?.() ?? reason
+        );
+        this.scheduleReconnect();
       });
     });
   }
@@ -148,6 +190,10 @@ class F1APIWebSocketsClient extends EventEmitter {
       .configureLogging(LogLevel.Information)
       .build();
 
+    connection.on("open", () => {
+      this.resetAttempts();
+    });
+
     connection.on("feed", (feedName, data, timestamp) => {
       this.stateProcessor.processFeed(feedName, data, timestamp);
       const streamingData = {
@@ -171,7 +217,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
     connection.onclose((error) => {
       console.log("Error at premium websocket: ", error);
-      return error;
+      this.scheduleReconnect();
     });
 
     try {
@@ -207,7 +253,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       return connection;
     } catch (error) {
       console.error("Connection failed: ", error);
-      throw error;
+      return Promise.reject(error);
     }
   }
 
@@ -332,6 +378,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
       sock.on("open", () => {
         console.log("Connected to local debug websocket:", url);
+        this.resetAttempts();
         res(sock);
       });
 
@@ -393,11 +440,16 @@ class F1APIWebSocketsClient extends EventEmitter {
           code,
           reason?.toString?.() ?? reason
         );
+        this.scheduleReconnect();
       });
     });
   }
 
   async init() {
+    if (this.isInitializing) {
+      return;
+    }
+    this.isInitializing = true;
     try {
       const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
 
@@ -475,16 +527,9 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
       }
     } catch (error) {
-      if (this.initAttempts < this.maxInitAttempts) {
-        console.log("Attempting to reconnect...");
-        const delay = Math.pow(2, this.initAttempts) * 1000;
-        setTimeout(() => {
-          this.initAttempts++;
-          this.init();
-        }, delay);
-      } else {
-        console.log("Max reconnect attempts reached.", error);
-      }
+      console.log("Error in init:", error);
+    } finally {
+      this.isInitializing = false;
     }
   }
 }

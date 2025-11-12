@@ -2,6 +2,7 @@ import Redis, { Redis as RedisType } from "ioredis";
 
 class RedisClient {
   private client: RedisType;
+  private silent = false;
 
   constructor() {
     const REDIS_HOST = process.env.REDISHOST || "localhost";
@@ -14,13 +15,19 @@ class RedisClient {
       host: REDIS_HOST,
       port: REDIS_PORT,
       password: REDIS_PASSWORD,
-      maxRetriesPerRequest: null,
+      maxRetriesPerRequest: 3,
     });
 
-    this.client.on("connect", () =>
-      console.log(`Redis connection succeeded on ${REDIS_HOST}:${REDIS_PORT}`)
-    );
-    this.client.on("error", (err) => console.error("Redis error:", err));
+    this.client.on("connect", () => {
+      console.log(`Redis connection succeeded on ${REDIS_HOST}:${REDIS_PORT}`);
+      this.silent = false;
+    });
+    this.client.on("error", (err: any) => {
+      if (!this.silent) {
+        console.error("Redis error:", err);
+        this.silent = true;
+      }
+    });
   }
 
   private makeKey(
@@ -44,7 +51,7 @@ class RedisClient {
     const key = this.makeKey(
       sessionId,
       feedName,
-      this.removeMiliseconds(timestamp)
+      feedName === "TeamRadio" ? timestamp : this.removeMiliseconds(timestamp)
     );
     try {
       await this.client.set(key, text);
@@ -99,4 +106,3 @@ class RedisClient {
 }
 
 export { RedisClient };
-export default new RedisClient();
