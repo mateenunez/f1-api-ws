@@ -1,19 +1,18 @@
 // api.js
 import express from "express";
-import dotenv from 'dotenv';
+import dotenv from "dotenv";
 const router = express.Router();
 import ical from "ical";
 import axios from "axios";
 import { Response, Request } from "express";
-dotenv.config()
-
+dotenv.config();
 
 interface IcalEvent {
   id: string;
   type: string;
   track: string;
   start: Date;
-  end?: Date,
+  end?: Date;
   location: string;
 }
 
@@ -34,26 +33,56 @@ function isSafe(url: string) {
   return url.startsWith("https://livetiming.formula1.com/");
 }
 
-function getEventType(summary: string): 'Practice 1' | 'Practice 2' | 'Practice 3' | 'Qualifying' | 'Sprint Qualification' | 'Sprint Race' | 'Race' | 'Other' {
+function parseIcalDate(raw: any): Date | null {
+  if (!raw) return null;
+  if (raw instanceof Date) return isNaN(raw.getTime()) ? null : raw;
+
+  let s = String(raw).trim();
+  s = s.replace(/[\r\n]+/g, ""); // remove trailing CR/LF
+
+  // YYYYMMDDTHHMMSSZ  ->  YYYY-MM-DDTHH:MM:SSZ
+  const m = s.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})(\d{2})Z$/);
+  if (m) return new Date(`${m[1]}-${m[2]}-${m[3]}T${m[4]}:${m[5]}:${m[6]}Z`);
+
+  // YYYYMMDDTHHMMZ (no seconds)
+  const m2 = s.match(/^(\d{4})(\d{2})(\d{2})T(\d{2})(\d{2})Z$/);
+  if (m2) return new Date(`${m2[1]}-${m2[2]}-${m2[3]}T${m2[4]}:${m2[5]}:00Z`);
+
+  // fallback to Date parsing
+  const d = new Date(s);
+  return isNaN(d.getTime()) ? null : d;
+}
+
+function getEventType(
+  summary: string
+):
+  | "Practice 1"
+  | "Practice 2"
+  | "Practice 3"
+  | "Qualifying"
+  | "Sprint Qualification"
+  | "Sprint Race"
+  | "Race"
+  | "Other" {
   const summaryLower = summary.toLowerCase();
 
-  if (summaryLower.includes('practice 1')) {
-    return 'Practice 1';
-  } else if (summaryLower.includes('practice 2')) {
-    return 'Practice 2';
-  } else if (summaryLower.includes('practice 3')) {
-    return 'Practice 3';
-  } else if (summaryLower.includes('qualifying')) {
-    return 'Qualifying';
-  } else if (summaryLower.includes('sprint qualification')) {
-    return 'Sprint Qualification';
-  } else if (summaryLower.includes('sprint race')) {
-    return 'Sprint Race';
-  } else if (summaryLower.includes('race')) {
-    return 'Race';
+  if (summaryLower.includes("practice 1")) {
+    return "Practice 1";
+  } else if (summaryLower.includes("practice 2")) {
+    return "Practice 2";
+  } else if (summaryLower.includes("practice 3")) {
+    return "Practice 3";
+  } else if (summaryLower.includes("qualifying")) {
+    return "Qualifying";
+  } else if (summaryLower.includes("sprint qualification")) {
+    return "Sprint Qualification";
+  } else if (summaryLower.includes("sprint race")) {
+    return "Sprint Race";
+  } else if (summaryLower.includes("race")) {
+    return "Race";
   }
 
-  return 'Other';
+  return "Other";
 }
 
 function getTrack(summary: string): string {
@@ -62,7 +91,7 @@ function getTrack(summary: string): string {
 
   if (match && match[1]) {
     let circuito = match[1].trim();
-    circuito = circuito.replace(/\s\d{4}$/, '').trim();
+    circuito = circuito.replace(/\s\d{4}$/, "").trim();
     return circuito;
   }
 
@@ -82,28 +111,37 @@ async function getEvents() {
 
   for (let eventId in events) {
     const event = events[eventId];
+    if (!event.start) continue;
 
-    if (event.start && event.start > now) {
+    const start = parseIcalDate(event.start);
+    if (!start) {
+      // console.log("Unparsed event.start:", eventId, event.start);
+      continue;
+    }
 
+    if (start.getTime() > now.getTime()) {
       formattedEvents.push({
         id: eventId,
         type: getEventType(event.summary || ""),
-        start: event.start,
-        end: event.end,
+        start,
+        end:
+          event.end instanceof Date
+            ? (event.end as Date)
+            : event.end
+              ? (parseIcalDate(event.end) ?? undefined)
+              : undefined,
         track: getTrack(event.summary || ""),
         location: event.location || "",
       });
     }
   }
-
   return formattedEvents;
 }
-
 
 function groupByLocation(formattedEvents: IcalEvent[]) {
   const gruposTemp = new Map<string, EventsByLocation>();
 
-  formattedEvents.forEach(evento => {
+  formattedEvents.forEach((evento) => {
     const { type, track, start, location } = evento;
 
     if (!gruposTemp.has(track)) {
@@ -113,32 +151,34 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
     const grupo = gruposTemp.get(track)!;
 
     switch (type) {
-      case 'Practice 1':
+      case "Practice 1":
         grupo.p1 = evento;
         break;
-      case 'Practice 2':
+      case "Practice 2":
         grupo.p2 = evento;
         break;
-      case 'Practice 3':
+      case "Practice 3":
         grupo.p3 = evento;
         break;
-      case 'Qualifying':
+      case "Qualifying":
         grupo.q = evento;
         break;
-      case 'Sprint Qualification':
+      case "Sprint Qualification":
         grupo.sq = evento;
         break;
-      case 'Sprint Race':
+      case "Sprint Race":
         grupo.sr = evento;
         break;
-      case 'Race':
+      case "Race":
         grupo.r = evento;
         break;
     }
   });
 
-  const orderedArray = Array.from(gruposTemp.values())
-    .sort((a: EventsByLocation, b: EventsByLocation) => a.start.getTime() - b.start.getTime())
+  const orderedArray = Array.from(gruposTemp.values()).sort(
+    (a: EventsByLocation, b: EventsByLocation) =>
+      a.start.getTime() - b.start.getTime()
+  );
 
   return orderedArray;
 }
@@ -148,8 +188,9 @@ async function calendarHandle(req: Request, res: Response) {
     const formattedEvents = await getEvents();
     const now = new Date();
 
-    formattedEvents.sort((a: IcalEvent, b: IcalEvent) =>
-      a.start.getTime() - b.start.getTime());
+    formattedEvents.sort(
+      (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime()
+    );
 
     const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
 
@@ -184,7 +225,7 @@ async function calendarHandle(req: Request, res: Response) {
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error."
+    const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(500).json({
       success: false,
       error: "Error at calendarHandle.",
@@ -196,10 +237,11 @@ async function calendarHandle(req: Request, res: Response) {
 async function upcomingHandle(req: Request, res: Response) {
   try {
     const formattedEvents = await getEvents();
-    const now = new Date()
+    const now = new Date();
 
-    formattedEvents.sort((a: IcalEvent, b: IcalEvent) =>
-      a.start.getTime() - b.start.getTime());
+    formattedEvents.sort(
+      (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime()
+    );
 
     const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
 
@@ -231,7 +273,7 @@ async function upcomingHandle(req: Request, res: Response) {
       lastUpdated: new Date().toISOString(),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error."
+    const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(500).json({
       success: false,
       error: "Error at upcomingHandle.",
@@ -282,9 +324,9 @@ router.get("/", async (req: Request, res: Response) => {
   `);
 });
 
-router.get("/calendar", calendarHandle)
+router.get("/calendar", calendarHandle);
 
-router.get("/upcoming", upcomingHandle)
+router.get("/upcoming", upcomingHandle);
 
 router.get("/download-mp3", async (req: Request, res: Response) => {
   try {
@@ -311,7 +353,7 @@ router.get("/download-mp3", async (req: Request, res: Response) => {
 
     response.data.pipe(res);
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error."
+    const message = error instanceof Error ? error.message : "Unknown error.";
     res.status(500).send("Error at file download:" + message);
   }
 });
