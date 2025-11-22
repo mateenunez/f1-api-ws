@@ -251,52 +251,72 @@ class StateProcessor implements StateProvider {
         break;
 
       case "SessionInfo":
-        if (data.SessionStatus === "Inactive") {
-          this.fullState.R.TimingAppData = null;
-          this.fullState.R.TyreStintSeries = null;
-          this.fullState.R.RaceControlMessages = [];
-          this.fullState.R.RaceControlMessagesEs = [];
-          this.fullState.R.TeamRadio = [];
-          Object.keys(this.fullState.R.TimingData.Lines).forEach((key) => {
-            if (
-              this.fullState.R.TimingData.Lines[key] &&
-              typeof this.fullState.R.TimingData.Lines[key] === "object"
-            ) {
-              this.fullState.R.TimingData.Lines[key].NumberOfPitStops = 0;
-              this.fullState.R.TimingData.Lines[key].GapToLeader = "";
-              this.fullState.R.TimingData.Lines[key].IntervalToPositionAhead =
-                "";
-              this.fullState.R.TimingData.Lines[key].TimeDiffToPositionAhead =
-                "";
-              this.fullState.R.TimingData.Lines[key].TimeDiffToFastest = "";
-              this.fullState.R.TimingData.Lines[key].Stats = [];
-              this.fullState.R.TimingData.Lines[key].Retired = false;
-              this.fullState.R.TimingData.Lines[key].KnockedOut = false;
-            }
-          });
-          Object.keys(this.fullState.R.TimingStats.Lines).forEach((key) => {
-            if (
-              this.fullState.R.TimingStats.Lines[key] &&
-              typeof this.fullState.R.TimingStats.Lines[key] === "object"
-            ) {
-              this.fullState.R.TimingStats.Lines[
-                key
-              ].PersonalBestLapTime.Value = "";
-              this.fullState.R.TimingStats.Lines[key].PersonalBestLapTime.Lap =
-                "";
-              this.fullState.R.TimingStats.Lines[
-                key
-              ].PersonalBestLapTime.Position = "";
-            }
-          });
-        }
-
         if (this.fullState?.R?.SessionInfo) {
           this.deepMerge(this.fullState.R.SessionInfo, data);
         }
         break;
 
       case "SessionData":
+        if (data?.StatusSeries) {
+          for (const key in data.StatusSeries) {
+            if (data.StatusSeries[key]?.SessionStatus === "Inactive") {
+              console.log("Inactive session detected, cleaning attributes.");
+              this.fullState.R.TimingAppData = null;
+              this.fullState.R.TyreStintSeries = {};
+              this.fullState.R.RaceControlMessages = [];
+              this.fullState.R.RaceControlMessagesEs = [];
+              this.fullState.R.TeamRadio = [];
+
+              Object.keys(this.fullState.R.TimingData.Lines).forEach(
+                (lineKey) => {
+                  if (
+                    this.fullState.R.TimingData.Lines[lineKey] &&
+                    typeof this.fullState.R.TimingData.Lines[lineKey] ===
+                      "object"
+                  ) {
+                    this.fullState.R.TimingData.Lines[
+                      lineKey
+                    ].NumberOfPitStops = 0;
+                    this.fullState.R.TimingData.Lines[lineKey].GapToLeader = "";
+                    this.fullState.R.TimingData.Lines[
+                      lineKey
+                    ].IntervalToPositionAhead = "";
+                    this.fullState.R.TimingData.Lines[
+                      lineKey
+                    ].TimeDiffToPositionAhead = "";
+                    this.fullState.R.TimingData.Lines[
+                      lineKey
+                    ].TimeDiffToFastest = "";
+                    this.fullState.R.TimingData.Lines[lineKey].Stats = [];
+                    this.fullState.R.TimingData.Lines[lineKey].Retired = false;
+                    this.fullState.R.TimingData.Lines[lineKey].KnockedOut =
+                      false;
+                  }
+                }
+              );
+
+              Object.keys(this.fullState.R.TimingStats.Lines).forEach(
+                (lineKey) => {
+                  if (
+                    this.fullState.R.TimingStats.Lines[lineKey] &&
+                    typeof this.fullState.R.TimingStats.Lines[lineKey] ===
+                      "object"
+                  ) {
+                    this.fullState.R.TimingStats.Lines[
+                      lineKey
+                    ].PersonalBestLapTime.Value = "";
+                    this.fullState.R.TimingStats.Lines[
+                      lineKey
+                    ].PersonalBestLapTime.Lap = "";
+                    this.fullState.R.TimingStats.Lines[
+                      lineKey
+                    ].PersonalBestLapTime.Position = "";
+                  }
+                }
+              );
+            }
+          }
+        }
         if (this.fullState?.R?.SessionData) {
           this.deepMerge(this.fullState.R.SessionData, data);
         }
