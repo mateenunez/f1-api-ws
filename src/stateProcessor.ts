@@ -7,7 +7,6 @@ interface FullState {
 interface StateProvider {
   getState(): FullState;
 }
-
 class StateProcessor implements StateProvider {
   fullState: FullState;
 
@@ -29,11 +28,7 @@ class StateProcessor implements StateProvider {
     return this.fullState.R.SessionInfo.Meeting.Key ?? "";
   }
 
-  async saveToRedis(
-    feedName: string,
-    timestamp: string,
-    data: any
-  ): Promise<void> {
+  async saveToRedis(feedName: string, data: any): Promise<void> {
     try {
       const sessionId = this.getSessionId();
       if (!sessionId) {
@@ -41,85 +36,32 @@ class StateProcessor implements StateProvider {
         return;
       }
 
-      const serializedData = JSON.stringify(data);
-      await this.redis.save(sessionId, feedName, timestamp, serializedData);
+      const serializedData = JSON.stringify(data.msg || data.cap);
+      const objectKey = data.key;
+      await this.redis.save(sessionId, feedName, objectKey, serializedData);
     } catch (err) {
       console.error(`Error saving ${feedName} to Redis:`, err);
     }
   }
 
-  private getTimestampsFromFeed(
-    feedObj: any,
-    entriesKey = "Messages",
-    timestampField = "Utc"
-  ): string[] {
-    if (!feedObj) return [];
-
-    if (Array.isArray(feedObj[entriesKey])) {
-      return this.extractTimestampsFromArray(
-        feedObj[entriesKey],
-        timestampField
-      );
-    }
-
-    for (const k in feedObj) {
-      if (feedObj[k] && Array.isArray(feedObj[k][entriesKey])) {
-        return this.extractTimestampsFromArray(
-          feedObj[k][entriesKey],
-          timestampField
-        );
-      }
-    }
-
-    if (Array.isArray(feedObj)) {
-      return this.extractTimestampsFromArray(feedObj, timestampField);
-    }
-
-    return [];
-  }
-
-  private extractTimestampsFromArray(
-    arr: any[],
-    timestampField = "Utc"
-  ): string[] {
-    return arr
-      .map((m: any) =>
-        m?.[timestampField] != null ? String(m[timestampField]) : null
-      )
-      .filter((u: string | null): u is string => u !== null && u !== "");
-  }
-
-  getRaceControlMessageTimestamps(raceControlMessagesObj: any): string[] {
-    return this.getTimestampsFromFeed(
-      raceControlMessagesObj,
-      "Messages",
-      "Utc"
-    );
-  }
-
-  getTeamRadioTimestamps(teamRadioObj: any): string[] {
-    return this.getTimestampsFromFeed(teamRadioObj, "Captures", "Utc");
-  }
-
   async getListFromRedis(
     feedName: string
-  ): Promise<Array<{ timestamp: string | number; text: string | null }>> {
+  ): Promise<Array<{ text: string | null }>> {
     try {
       const sessionId = this.getSessionId();
       if (!sessionId) return [];
 
-      let timestamps: string[] = [];
+      let items = [];
 
       if (feedName === "TeamRadio") {
-        timestamps = this.getTeamRadioTimestamps(this.fullState.R.TeamRadio);
+        items = this.fullState.R.TeamRadio.Captures || [];
+      } else if (feedName === "RaceControlMessages") {
+        items = this.fullState.R.RaceControlMessages.Messages || [];
       } else {
-        timestamps = this.getRaceControlMessageTimestamps(
-          this.fullState.R.RaceControlMessages
-        );
+        items = this.fullState.R.RaceControlMessagesEs?.Messages || [];
       }
-      if (!timestamps || timestamps.length === 0) return [];
+      if (!items || items.length === 0) return [];
 
-      const items = timestamps.map((t) => ({ timestamp: t }));
       return (await this.redis.getList(sessionId, feedName, items)).filter(
         (it) => it !== null
       );
@@ -257,66 +199,6 @@ class StateProcessor implements StateProvider {
         break;
 
       case "SessionData":
-        if (data?.StatusSeries) {
-          for (const key in data.StatusSeries) {
-            if (data.StatusSeries[key]?.SessionStatus === "Inactive") {
-              console.log("Inactive session detected, cleaning attributes.");
-              this.fullState.R.TimingAppData = null;
-              this.fullState.R.TyreStintSeries = {};
-              this.fullState.R.RaceControlMessages = [];
-              this.fullState.R.RaceControlMessagesEs = [];
-              this.fullState.R.TeamRadio = [];
-
-              Object.keys(this.fullState.R.TimingData.Lines).forEach(
-                (lineKey) => {
-                  if (
-                    this.fullState.R.TimingData.Lines[lineKey] &&
-                    typeof this.fullState.R.TimingData.Lines[lineKey] ===
-                      "object"
-                  ) {
-                    this.fullState.R.TimingData.Lines[
-                      lineKey
-                    ].NumberOfPitStops = 0;
-                    this.fullState.R.TimingData.Lines[lineKey].GapToLeader = "";
-                    this.fullState.R.TimingData.Lines[
-                      lineKey
-                    ].IntervalToPositionAhead = "";
-                    this.fullState.R.TimingData.Lines[
-                      lineKey
-                    ].TimeDiffToPositionAhead = "";
-                    this.fullState.R.TimingData.Lines[
-                      lineKey
-                    ].TimeDiffToFastest = "";
-                    this.fullState.R.TimingData.Lines[lineKey].Stats = [];
-                    this.fullState.R.TimingData.Lines[lineKey].Retired = false;
-                    this.fullState.R.TimingData.Lines[lineKey].KnockedOut =
-                      false;
-                  }
-                }
-              );
-
-              Object.keys(this.fullState.R.TimingStats.Lines).forEach(
-                (lineKey) => {
-                  if (
-                    this.fullState.R.TimingStats.Lines[lineKey] &&
-                    typeof this.fullState.R.TimingStats.Lines[lineKey] ===
-                      "object"
-                  ) {
-                    this.fullState.R.TimingStats.Lines[
-                      lineKey
-                    ].PersonalBestLapTime.Value = "";
-                    this.fullState.R.TimingStats.Lines[
-                      lineKey
-                    ].PersonalBestLapTime.Lap = "";
-                    this.fullState.R.TimingStats.Lines[
-                      lineKey
-                    ].PersonalBestLapTime.Position = "";
-                  }
-                }
-              );
-            }
-          }
-        }
         if (this.fullState?.R?.SessionData) {
           this.deepMerge(this.fullState.R.SessionData, data);
         }

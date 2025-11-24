@@ -15,6 +15,9 @@ class F1APIWebSocketsClient extends EventEmitter {
   private initAttempts = 0;
   private isInitializing = false;
   private reconnectTimeout: NodeJS.Timeout | null = null;
+  private premiumConnection?: HubConnection;
+  private commonSocket?: WebSocket;
+  private localSocket?: WebSocket;
 
   constructor(
     protected readonly stateProcessor: StateProcessor,
@@ -28,6 +31,39 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   broadcast(data: any) {
     this.emit("broadcast", data);
+  }
+
+  private isSessionInactive(data: any): boolean {
+    if (!data) return false;
+    const statusSeries = data.StatusSeries ?? data?.StatusSeries;
+    if (!statusSeries || typeof statusSeries !== "object") return false;
+    for (const k in statusSeries) {
+      if (statusSeries[k]?.SessionStatus === "Inactive") return true;
+    }
+    return false;
+  }
+
+  async receivedInactiveSession(): Promise<void> {
+    try {
+      console.log(
+        "Received Inactive session, forcing full dump (disconnect/reconnect)."
+      );
+      await this.disconnect();
+      if (
+        typeof (this.stateProcessor as any).updatePartialState === "function"
+      ) {
+        await (this.stateProcessor as any).updatePartialState("R", {});
+      } else if (
+        typeof (this.stateProcessor as any).updateState === "function"
+      ) {
+        await (this.stateProcessor as any).updateState({ R: {} });
+      }
+      // small delay to ensure sockets fully closed
+      await new Promise((r) => setTimeout(r, 200));
+      await this.init();
+    } catch (err) {
+      console.error("Error handling inactive session:", err);
+    }
   }
 
   private scheduleReconnect() {
@@ -84,6 +120,8 @@ class F1APIWebSocketsClient extends EventEmitter {
         },
       });
 
+      this.commonSocket = sock;
+
       sock.on("open", () => {
         res(sock);
         this.resetAttempts();
@@ -108,6 +146,11 @@ class F1APIWebSocketsClient extends EventEmitter {
               }
 
               this.stateProcessor.processFeed(feedName, data, timestamp);
+
+              if (feedName === "SessionData" && this.isSessionInactive(data)) {
+                void this.receivedInactiveSession();
+                return;
+              }
 
               if (feedName === "RaceControlMessages") {
                 this.receivedRaceControlMessage(feedName, data, timestamp);
@@ -139,6 +182,7 @@ class F1APIWebSocketsClient extends EventEmitter {
           code,
           reason?.toString?.() ?? reason
         );
+        this.commonSocket = undefined;
         this.scheduleReconnect();
       });
     });
@@ -190,6 +234,8 @@ class F1APIWebSocketsClient extends EventEmitter {
       .configureLogging(LogLevel.Information)
       .build();
 
+    this.premiumConnection = connection;
+
     connection.on("open", () => {
       this.resetAttempts();
     });
@@ -200,6 +246,11 @@ class F1APIWebSocketsClient extends EventEmitter {
         M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
       };
       this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+
+      if (feedName === "SessionData" && this.isSessionInactive(data)) {
+        void this.receivedInactiveSession();
+        return;
+      }
 
       if (feedName === "RaceControlMessages") {
         this.receivedRaceControlMessage(feedName, data, timestamp);
@@ -217,6 +268,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
     connection.onclose((error) => {
       console.log("Error at premium websocket: ", error);
+      this.premiumConnection = undefined;
       this.scheduleReconnect();
     });
 
@@ -282,7 +334,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       const newMessages: Record<string, any> = {};
       translated.forEach(({ key, msg }) => {
         newMessages[key] = msg;
-        this.stateProcessor.saveToRedis(feedName + "Es", timestamp, msg);
+        this.stateProcessor.saveToRedis(feedName + "Es", { key, msg });
       });
 
       const translateData = { Messages: newMessages };
@@ -351,7 +403,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       const newCaptures: Record<string, any> = {};
       results.forEach(([key, cap]) => {
         newCaptures[key] = cap;
-        this.stateProcessor.saveToRedis(feedName, timestamp, cap);
+        this.stateProcessor.saveToRedis(feedName, { key, cap });
       });
 
       const payload = { Captures: newCaptures };
@@ -375,6 +427,8 @@ class F1APIWebSocketsClient extends EventEmitter {
           "Accept-Encoding": "gzip,identity",
         },
       });
+
+      this.localSocket = sock;
 
       sock.on("open", () => {
         console.log("Connected to local debug websocket:", url);
@@ -405,6 +459,14 @@ class F1APIWebSocketsClient extends EventEmitter {
               if (!snapshot || !snapshot.R) return;
 
               this.stateProcessor.processFeed(feedName, feedData, timestamp);
+
+              if (
+                feedName === "SessionData" &&
+                this.isSessionInactive(feedData)
+              ) {
+                void this.receivedInactiveSession();
+                return;
+              }
 
               if (feedName === "RaceControlMessages") {
                 this.receivedRaceControlMessage(feedName, feedData, timestamp);
@@ -440,9 +502,37 @@ class F1APIWebSocketsClient extends EventEmitter {
           code,
           reason?.toString?.() ?? reason
         );
+        this.localSocket = undefined;
         this.scheduleReconnect();
       });
     });
+  }
+
+  async disconnect(): Promise<void> {
+    if (this.reconnectTimeout) {
+      clearTimeout(this.reconnectTimeout);
+      this.reconnectTimeout = null;
+    }
+    this.isInitializing = false;
+    try {
+      if (this.premiumConnection) {
+        await this.premiumConnection.stop();
+      }
+    } catch {}
+    try {
+      if (this.commonSocket) {
+        this.commonSocket.close();
+      }
+    } catch {}
+    try {
+      if (this.localSocket) {
+        this.localSocket.close();
+      }
+    } catch {}
+    this.premiumConnection = undefined;
+    this.commonSocket = undefined;
+    this.localSocket = undefined;
+    this.resetAttempts();
   }
 
   async init() {

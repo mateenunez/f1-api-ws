@@ -30,33 +30,21 @@ class RedisClient {
     });
   }
 
-  private makeKey(
-    sessionId: string,
-    feedName: string,
-    timestamp: string | number
-  ) {
-    return `${sessionId}:${feedName}:${timestamp}`;
-  }
-
-  private removeMiliseconds(ts: string | number): string {
-    return String(ts).split(".")[0];
+  private makeKey(sessionId: string, feedName: string, objectKey: string) {
+    return `${sessionId}:${feedName}:${objectKey}`;
   }
 
   async save(
     sessionId: string,
     feedName: string,
-    timestamp: string | number,
-    text: string
+    objectKey: string,
+    objectValue: string
   ): Promise<void> {
-    const key = this.makeKey(
-      sessionId,
-      feedName,
-      feedName === "TeamRadio" ? timestamp : this.removeMiliseconds(timestamp)
-    );
+    const key = this.makeKey(sessionId, feedName, objectKey);
     try {
-      await this.client.set(key, text);
+      await this.client.set(key, objectValue);
     } catch (err) {
-      console.error("Error at save one text:", err);
+      console.error("Error saving object on Redis:", err);
       throw err;
     }
   }
@@ -64,9 +52,9 @@ class RedisClient {
   async get(
     sessionId: string,
     feedName: string,
-    timestamp: string | number
+    objectKey: string
   ): Promise<string | null> {
-    const key = this.makeKey(sessionId, feedName, timestamp);
+    const key = this.makeKey(sessionId, feedName, objectKey);
     try {
       const raw = await this.client.get(key);
       if (!raw) return null;
@@ -77,16 +65,24 @@ class RedisClient {
     }
   }
 
-  async getList<T extends { timestamp: string | number }>(
+  async getList(
     sessionId: string,
     feedName: string,
-    items: T[]
+    items: any[]
   ): Promise<Array<any>> {
-    if (!items || items.length === 0) return [];
+    if (
+      !items ||
+      typeof items !== "object" ||
+      Object.keys(items).length === 0
+    ) {
+      return [];
+    }
 
-    const keys = items.map((it) =>
-      this.makeKey(sessionId, feedName, it.timestamp)
+    const objectKeys = Object.keys(items);
+    const keys = objectKeys.map((objKey) =>
+      this.makeKey(sessionId, feedName, objKey)
     );
+
     try {
       const values = await this.client.mget(...keys);
       return items.map((it, idx) => {
