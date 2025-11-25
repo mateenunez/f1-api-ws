@@ -130,8 +130,11 @@ class F1APIWebSocketsClient extends EventEmitter {
       sock.on("message", async (data) => {
         const parsedData = JSON.parse(data.toString());
         if (parsedData.R) {
-          this.stateProcessor.updateState(parsedData);
-          console.log("Basic data subscription fullfilled");
+          await this.stateProcessor.updateState(parsedData);
+          this.broadcast(
+            Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+          );
+          console.log("Basic data subscription fullfilled and broadcasted.");
         }
 
         // Actualizar el estado de la variable on connection data
@@ -298,8 +301,11 @@ class F1APIWebSocketsClient extends EventEmitter {
       ]);
 
       if (subscriptionData) {
-        this.stateProcessor.updateStatePremium(subscriptionData);
-        console.log("Premium data subscription fullfilled.");
+        await this.stateProcessor.updateStatePremium(subscriptionData);
+        this.broadcast(
+          Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+        );
+        console.log("Premium data subscription fullfilled and broadcasted.");
       }
 
       return connection;
@@ -436,7 +442,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         res(sock);
       });
 
-      sock.on("message", (data) => {
+      sock.on("message", async (data) => {
         let parsedData: any;
         try {
           parsedData = JSON.parse(data.toString());
@@ -446,8 +452,13 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
 
         if (parsedData.R) {
-          this.stateProcessor.updateState(parsedData);
-          console.log("Local debug: full state received/updated.");
+          await this.stateProcessor.updateState(parsedData);
+          this.broadcast(
+            Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+          );
+          console.log(
+            "Local debug: full state received/updated and broadcasted."
+          );
         }
 
         if (Array.isArray(parsedData.M)) {
