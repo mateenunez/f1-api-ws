@@ -5,7 +5,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "dev": "nodemon -e ts -w ./src -x ts-node ./src/app.ts",
-    "start": "node --optimize_for_size --max-old-space-size=120 ./dist/app.js",
+    "start": "node --optimize_for_size ./dist/app.js",
     "build": "tsc"
   },
   "keywords": [],
