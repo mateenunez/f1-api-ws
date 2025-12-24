@@ -29,11 +29,28 @@ async function main() {
   const stateProcessor = new StateProcessor(redisClient); // Processes and maintains the state of the current session.
 
   let eventEmitter: EventEmitter;
+  const argvReplay = process.argv.some((arg) => arg === "--replay");
+  console.log("Replay flag is set as", argvReplay)
 
-  if (process.env.REPLAY_FILE) {
-    const fastForwardSeconds = parseInt(
-      process.env.REPLAY_FAST_FORWARD_SECONDS || "0"
-    );
+  if (process.env.REPLAY_FILE && argvReplay) {
+    let fastForwardSeconds = 0;
+
+    // support --fast-forward=1080 or --fast-forward 1080
+    const ffEq = process.argv.find((a) => a.startsWith("--fast-forward="));
+    if (ffEq) {
+      const maybe = ffEq.split("=")[1];
+      const v = parseInt(maybe ?? "");
+      if (!isNaN(v)) fastForwardSeconds = v;
+    } else {
+      const ffIdx = process.argv.indexOf("--fast-forward");
+      if (ffIdx !== -1 && process.argv[ffIdx + 1]) {
+        const v = parseInt(process.argv[ffIdx + 1]);
+        if (!isNaN(v)) fastForwardSeconds = v;
+      }
+    }
+
+    console.log("Fast forward is set to", fastForwardSeconds)
+
     const replayProvider = new ReplayProvider(
       process.env.REPLAY_FILE,
       stateProcessor,

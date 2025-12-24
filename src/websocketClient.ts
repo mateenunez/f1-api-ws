@@ -553,8 +553,10 @@ class F1APIWebSocketsClient extends EventEmitter {
     this.isInitializing = true;
     try {
       const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
+      const argvLocalws = process.argv.some((arg) => arg === "--localws");
+      console.log("Local websocket flag is set as", argvLocalws)
 
-      if (process.env.LOCALHOST_WEBSOCKET) {
+      if (process.env.LOCALHOST_WEBSOCKET && argvLocalws) {
         const url = process.env.LOCALHOST_WEBSOCKET;
         try {
           await this.localDebugWebsocketConnect(url);
