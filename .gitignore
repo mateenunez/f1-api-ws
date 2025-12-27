@@ -1,10 +1,4 @@
 /node_modules
 .env*
-.env.example
-.dockerignore
 .vscode
 dist
-.github
-.idea/
-/.github
-/.vscode
