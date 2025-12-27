@@ -1,87 +1,32 @@
+[![en](https://img.shields.io/badge/lang-en-blue.svg)](https://github.com/mateenunez/f1-api-ws/blob/master/README.en.md)
+[![es](https://img.shields.io/badge/lang-es-yellow.svg)](https://github.com/mateenunez/f1-api-ws/blob/master/README.md)
 # f1-api-ws
+##### Este backend se conecta a la fuente de datos y establece un Websocket que envía los datos en el formato apropiado para el consumo del [Frontend](https://github.com/mateenunez/f1-telemetry).
 
-Este proyecto es un backend que actúa como un espejo de WebSocket para datos de Fórmula 1. La funcionalidad principal consiste en conectarse a un WebSocket fuente de datos de F1, almacenar la información recibida en variables internas, y luego retransmitir estos datos a los clientes que se conectan a nuestro propio WebSocket.
+### 📦 Instalación
 
-## Descripción general
+Recomiendo usar **pnpm** para la instalación de las dependencias y configurar las siguientes variables de entorno:
 
-- **Entrada:** Datos provenientes de un WebSocket de terceros (por ejemplo, el feed oficial o no oficial de Fórmula 1).
-- **Procesamiento:** Los datos recibidos se almacenan y actualizan en variables internas usando una lógica de fusión profunda (`deepMerge`), permitiendo actualizar solo las partes relevantes de la estructura de datos sin sobrescribir completamente el estado anterior.
-- **Salida:** Los datos actualizados se ponen a disposición de los oyentes/clientes que se conectan a este backend vía WebSocket.
-
----
-
-## ¿Cómo se almacena la información?
-
-Cada vez que se recibe un mensaje del WebSocket de Fórmula 1, no se reemplaza completamente la variable que contiene el estado de la información, sino que se realiza una **fusión profunda** (“deep merge”). Esto permite:
-
-- Conservar los valores ya recibidos anteriormente que no hayan cambiado.
-- Actualizar solo las partes del objeto que hayan sido modificadas en el nuevo mensaje.
-- Evitar la pérdida de información parcial si los eventos/mensajes son incrementales.
-
-### Ejemplo de `deepMerge`
-
-Supón que tienes el siguiente estado almacenado:
-
-```js
-let estado = {
-  carData: {
-    car1: { speed: 320, rpm: 12000 },
-    car2: { speed: 315, rpm: 11800 }
-  },
-  weather: { temp: 28 }
-};
+```
+ASSEMBLYAI_API_KEY # Para transcripciones.
+CALENDAR_URL # Archivo ICS.
+GEMINI_API_KEY # Para traducciones.
+REDISHOST
+REDISPORT
+LOCALHOST_WEBSOCKET # Simula la fuente de datos original, es un dev tool.
+REPLAY_FILE # Replay file es un archivo JSON de una carrera para retransmitirla, es otro dev tool.
 ```
 
-Y recibes un nuevo mensaje solo con información actualizada del auto 1:
+### 🎯 Parámetros
 
-```js
-let incoming = {
-  carData: {
-    car1: { speed: 325 }
-  }
-};
+Ejecutar **pnpm run dev** o **pnpm run start** es suficiente para el funcionamiento normal. Como dev tools se crearon los siguientes parámetros:
+
+```
+--replay # Activa el modo replay.
+--fast-forward=<x> # Adelanta x segundos.
+--localws # Activa el websocket local.
 ```
 
-Usando `deepMerge(estado, incoming)`, el resultado sería:
+### 📈 Uso responsable
 
-```js
-{
-  carData: {
-    car1: { speed: 325, rpm: 12000 },
-    car2: { speed: 315, rpm: 11800 }
-  },
-  weather: { temp: 28 }
-}
-```
-
-De esta forma, la información que no se incluyó en el mensaje entrante (por ejemplo, `rpm` de `car1`) se conserva.
-
----
-
-## Función `deepMerge`
-
-La función `deepMerge` es clave en el almacenamiento eficiente de la información. Su objetivo es combinar de manera recursiva los objetos, manteniendo los valores anteriores si no han sido sobrescritos.
-
-### Ejemplo básico de implementación
-
-```js
-function deepMerge(target, source) {
-  for (const key in source) {
-    if (
-      source[key] &&
-      typeof source[key] === 'object' &&
-      !Array.isArray(source[key])
-    ) {
-      if (!target[key]) target[key] = {};
-      deepMerge(target[key], source[key]);
-    } else {
-      target[key] = source[key];
-    }
-  }
-  return target;
-}
-```
-
-Esta función asegura que los objetos anidados se actualicen correctamente y que no se pierda información.
-
----
+Por favor, si querés permiso para usar esta API contactame antes de hacerlo para asegurar un uso correcto de los recursos ❤️.
