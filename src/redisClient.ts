@@ -5,9 +5,9 @@ class RedisClient {
   private silent = false;
 
   constructor() {
-    const REDIS_HOST = process.env.REDISHOST || "localhost";
-    const REDIS_PORT = process.env.REDISPORT
-      ? parseInt(process.env.REDISPORT, 10)
+    const REDIS_HOST = process.env.REDIS_HOST;
+    const REDIS_PORT = process.env.REDIS_PORT
+      ? parseInt(process.env.REDIS_PORT, 10)
       : 6379;
     const REDIS_PASSWORD = process.env.REDIS_PASSWORD;
 
