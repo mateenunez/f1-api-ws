@@ -38,7 +38,7 @@ class RedisClient {
     sessionId: string,
     feedName: string,
     objectKey: string,
-    objectValue: string
+    objectValue: string,
   ): Promise<void> {
     const key = this.makeKey(sessionId, feedName, objectKey);
     try {
@@ -52,7 +52,7 @@ class RedisClient {
   async get(
     sessionId: string,
     feedName: string,
-    objectKey: string
+    objectKey: string,
   ): Promise<string | null> {
     const key = this.makeKey(sessionId, feedName, objectKey);
     try {
@@ -65,10 +65,19 @@ class RedisClient {
     }
   }
 
+  async setCooldown(userId: number, cooldown: number) {
+    await this.client.set(`cooldown:${userId}`, "1", "EX", cooldown);
+  }
+
+  async hasCooldown(userId: number) {
+    const cooldown = await this.client.exists(`cooldown:${userId}`);
+    return cooldown === 1;
+  }
+
   async getList(
     sessionId: string,
     feedName: string,
-    items: any[]
+    items: any[],
   ): Promise<Array<any>> {
     if (
       !items ||
@@ -80,7 +89,7 @@ class RedisClient {
 
     const objectKeys = Object.keys(items);
     const keys = objectKeys.map((objKey) =>
-      this.makeKey(sessionId, feedName, objKey)
+      this.makeKey(sessionId, feedName, objKey),
     );
 
     try {

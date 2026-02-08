@@ -5,12 +5,14 @@ import { WebSocketTelemetryServer } from "./websocketServer";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import { StateProcessor } from "./stateProcessor";
 import { ReplayProvider } from "./replayProvider";
-import router from "./api";
 import dotenv from "dotenv";
 import { EventEmitter } from "stream";
 import { TranslationService } from "./translationService";
 import { TranscriptionService } from "./transcriptionService";
 import { RedisClient } from "./redisClient";
+import { DatabaseService } from "./databaseService";
+import createRouter from "./api";
+import { UserService } from "./userService";
 dotenv.config();
 
 async function main() {
@@ -19,12 +21,16 @@ async function main() {
   const PORT = 4000;
 
   app.use(cors());
+  app.use(express.json()); // <-- enable JSON body parsing
 
-  app.use("/", router);
-
+  // instantiate services used by the API
+  const databaseService = new DatabaseService(); // PostgreSQL database for users.
   const translationService = new TranslationService(); // Translation service using Gemini API.
   const transcriptionService = new TranscriptionService(); // Transcription service using AssemblyAI API.
   const redisClient = new RedisClient(); // Redis client for storing and retrieving data.
+
+  // mount API router with injected services
+  app.use("/", createRouter(databaseService, redisClient));
 
   const stateProcessor = new StateProcessor(redisClient); // Processes and maintains the state of the current session.
 
@@ -68,7 +74,10 @@ async function main() {
     eventEmitter = websocketClient;
   }
 
-  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter); // Handles client connections and listens to the event bus.
+  const userService = new UserService(databaseService.getPool());
+
+
+  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter, redisClient, userService); // Handles client connections and listens to the event bus.
 
   server.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);

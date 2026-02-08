@@ -1,11 +1,15 @@
 // api.js
 import express from "express";
 import dotenv from "dotenv";
-const router = express.Router();
+dotenv.config();
 import ical from "ical";
 import axios from "axios";
 import { Response, Request } from "express";
-dotenv.config();
+import { DatabaseService } from "./databaseService";
+import { RoleService } from "./roleService";
+import { UserService } from "./userService";
+import { RedisClient } from "./redisClient";
+import swaggerUi from "swagger-ui-express";
 
 interface IcalEvent {
   id: string;
@@ -54,7 +58,7 @@ function parseIcalDate(raw: any): Date | null {
 }
 
 function getEventType(
-  summary: string
+  summary: string,
 ):
   | "Practice 1"
   | "Practice 2"
@@ -177,185 +181,581 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
 
   const orderedArray = Array.from(gruposTemp.values()).sort(
     (a: EventsByLocation, b: EventsByLocation) =>
-      a.start.getTime() - b.start.getTime()
+      a.start.getTime() - b.start.getTime(),
   );
 
   return orderedArray;
 }
 
-async function calendarHandle(req: Request, res: Response) {
-  try {
-    const formattedEvents = await getEvents();
-    const now = new Date();
+export default function (databaseService: DatabaseService, redisClient: RedisClient) {
+  const router = express.Router();
+  const pool = databaseService.getPool();
+  const roleService = new RoleService(pool);
+  const userService = new UserService(pool);
 
-    formattedEvents.sort(
-      (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime()
-    );
+  async function calendarHandle(req: Request, res: Response) {
+    try {
+      const formattedEvents = await getEvents();
+      const now = new Date();
 
-    const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
-
-    const groupsByLocation = groupByLocation(formattedEvents);
-
-    let timeUntilNext = null;
-
-    if (nextEvent) {
-      const timeDiff = nextEvent.start.getTime() - now.getTime();
-      const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor(
-        (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+      formattedEvents.sort(
+        (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime(),
       );
-      const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
 
-      timeUntilNext = {
-        days,
-        hours,
-        minutes,
-        seconds,
-        totalMinutes: Math.floor(timeDiff / (1000 * 60)),
-        totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
-      };
+      const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
+
+      const groupsByLocation = groupByLocation(formattedEvents);
+
+      let timeUntilNext = null;
+
+      if (nextEvent) {
+        const timeDiff = nextEvent.start.getTime() - now.getTime();
+        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor(
+          (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+        );
+        const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
+
+        timeUntilNext = {
+          days,
+          hours,
+          minutes,
+          seconds,
+          totalMinutes: Math.floor(timeDiff / (1000 * 60)),
+          totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
+        };
+      }
+
+      res.json({
+        success: true,
+        nextEvent,
+        timeUntilNext,
+        groupsByLocation,
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      res.status(500).json({
+        success: false,
+        error: "Error at calendarHandle.",
+        message,
+      });
     }
-
-    res.json({
-      success: true,
-      nextEvent,
-      timeUntilNext,
-      groupsByLocation,
-      lastUpdated: new Date().toISOString(),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error.";
-    res.status(500).json({
-      success: false,
-      error: "Error at calendarHandle.",
-      message,
-    });
   }
-}
 
-async function upcomingHandle(req: Request, res: Response) {
-  try {
-    const formattedEvents = await getEvents();
-    const now = new Date();
+  async function upcomingHandle(req: Request, res: Response) {
+    try {
+      const formattedEvents = await getEvents();
+      const now = new Date();
 
-    formattedEvents.sort(
-      (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime()
-    );
-
-    const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
-
-    let timeUntilNext = null;
-
-    if (nextEvent) {
-      const timeDiff = nextEvent.start.getTime() - now.getTime();
-      const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
-      const hours = Math.floor(
-        (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60)
+      formattedEvents.sort(
+        (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime(),
       );
-      const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
-      const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
 
-      timeUntilNext = {
-        days,
-        hours,
-        minutes,
-        seconds,
-        totalMinutes: Math.floor(timeDiff / (1000 * 60)),
-        totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
-      };
+      const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
+
+      let timeUntilNext = null;
+
+      if (nextEvent) {
+        const timeDiff = nextEvent.start.getTime() - now.getTime();
+        const days = Math.floor(timeDiff / (1000 * 60 * 60 * 24));
+        const hours = Math.floor(
+          (timeDiff % (1000 * 60 * 60 * 24)) / (1000 * 60 * 60),
+        );
+        const minutes = Math.floor((timeDiff % (1000 * 60 * 60)) / (1000 * 60));
+        const seconds = Math.floor((timeDiff % (1000 * 60)) / 1000);
+
+        timeUntilNext = {
+          days,
+          hours,
+          minutes,
+          seconds,
+          totalMinutes: Math.floor(timeDiff / (1000 * 60)),
+          totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
+        };
+      }
+
+      res.json({
+        success: true,
+        nextEvent,
+        timeUntilNext,
+        lastUpdated: new Date().toISOString(),
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      res.status(500).json({
+        success: false,
+        error: "Error at upcomingHandle.",
+        message,
+      });
     }
-
-    res.json({
-      success: true,
-      nextEvent,
-      timeUntilNext,
-      lastUpdated: new Date().toISOString(),
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error.";
-    res.status(500).json({
-      success: false,
-      error: "Error at upcomingHandle.",
-      message,
-    });
   }
-}
 
-router.get("/", async (req: Request, res: Response) => {
-  res.send(`
-    <!DOCTYPE html>
-    <html lang="es">
-      <head>
-        <meta charset="UTF-8" />
-        <title>F1 WebSocket Proxy</title>
-        <style>
-          body { font-family: Arial, sans-serif; background: #111; color: #fff; text-align: start; margin-top: 10%; margin-left: 10%;}
-          .status { font-size: 1em; margin-top: 20px; color: #57de44; }
-          .description { font-size: 0.8em; margin-top: 30px; display: flex; gap: 10px; flex-direction:column;}
-          .legal h3 {text-decoration: none; color: #5c67ffff;}
-        </style>
-      </head>
-      <body>
-        <h1>F1 Websocket Proxy</h1>
-        <div class="status">WebSocket active</div>
-        <div class="description">
-        <div> This is a websocket connection for the F1 Telemetry, captures F1 signal and sends the data with no modifications to the client. </div>
-        <div> This websocket doesn't need authorization, if you found this websocket and want to get the information please consider to notify the owner in order to preserve the free hosting. </div>
-        <div class="legal">
-          <h3>LEGAL DISCLAIMER & TERMS OF USE</h3>
-          <p><strong>PERSONAL USE ONLY:</strong> This backend service is developed and maintained for personal, non-commercial use only. It is not intended for commercial, business, or lucrative purposes.</p>
-          
-          <p><strong>NO COMMERCIAL INTENT:</strong> The owner of this service has no intentions to generate revenue, profit, or commercial gain from this backend. This is a personal project for educational and personal entertainment purposes.</p>
-          
-          <p><strong>NO WARRANTIES:</strong> This service is provided "AS IS" without any warranties, express or implied. The owner makes no representations about the reliability, accuracy, or completeness of the information provided.</p>
-          
-          <p><strong>LIMITATION OF LIABILITY:</strong> The owner of this backend service shall not be held responsible, liable, or accountable for any damages, losses, or consequences arising from the use, misuse, or inability to use this service. Users access and use this service at their own risk.</p>
-          
-          <p><strong>USER RESPONSIBILITY:</strong> Users are solely responsible for their use of this service and must comply with all applicable laws and regulations. The owner assumes no responsibility for user actions or the consequences thereof.</p>
-          
-          <p><strong>NO ENDORSEMENT:</strong> This service is not affiliated with, endorsed by, or sponsored by Formula 1, FIA, or any official racing organizations. All data and information are obtained from publicly available sources.</p>
-          
-          <p><strong>ACCEPTANCE:</strong> By accessing or using this service, you acknowledge that you have read, understood, and agree to these terms. If you do not agree, please do not use this service.</p>
-        </div>
-        </div>
+  const swaggerSpec: any = {
+    openapi: "3.0.0",
+    info: {
+      title: "F1 Telemetry API",
+      version: "1.0.0",
+      description:
+        "APIs for calendar, DB ping, roles and user auth (register/login).",
+    },
+    paths: {
+      "/db/ping": {
+        get: {
+          summary: "DB ping",
+          responses: {
+            "200": { description: "OK" },
+            "500": { description: "Error" },
+          },
+        },
+      },
+      "/roles/{id}": {
+        get: {
+          summary: "Get role by id",
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": { description: "Role found" },
+            "404": { description: "Not found" },
+          },
+        },
+      },
+      "/roles/update-cooldown": {
+        post: {
+          summary: "Update role cooldown",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    name: { type: "string" },
+                    newCooldown: { type: "integer" },
+                  },
+                  required: ["name", "newCooldown"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated" },
+            "400": { description: "Bad request" },
+          },
+        },
+      },
+      "/users/register": {
+        post: {
+          summary: "Register user",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    username: { type: "string" },
+                    email: { type: "string", format: "email" },
+                    password: { type: "string" },
+                  },
+                  required: ["username", "email", "password"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Registered" },
+            "400": { description: "Bad request" },
+          },
+        },
+      },
+      "/users/login": {
+        post: {
+          summary: "Login user",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    email: { type: "string", format: "email" },
+                    password: { type: "string" },
+                  },
+                  required: ["email", "password"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Authenticated" },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/users/verify-token": {
+        post: {
+          summary: "Verify user token",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    token: { type: "string" },
+                  },
+                  required: ["token"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Authenticated" },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/users": {
+        get: {
+          summary: "Get all registered users (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "List of users retrieved successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/users/block/{id}": {
+        post: {
+          summary: "Block a user by setting big cooldown (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": { description: "User blocked successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+            "400": { description: "Bad request - invalid user ID" },
+          },
+        },
+      },
+      "/users/{id}": {
+        delete: {
+          summary: "Delete a user (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          responses: {
+            "200": { description: "User deleted successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+            "404": { description: "User not found" },
+            "400": { description: "Bad request - invalid user ID" },
+          },
+        },
+      },
+      "/calendar": {
+        get: { summary: "Get calendar events" },
+      },
+      "/upcoming": {
+        get: { summary: "Get upcoming event" },
+      },
+    },
+  };
+
+  // mount swagger UI at /swagger
+  router.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+
+  router.get("/", async (req: Request, res: Response) => {
+    res.send(`
+      <!DOCTYPE html>
+      <html lang="es">
+        <head>
+          <meta charset="UTF-8" />
+          <title>F1 WebSocket Proxy</title>
+          <style>
+            :root { --bg: #1c2022; --card: #ffffff; --muted: #c7d0da; --accent: #4ab855; }
+            body { font-family: Arial, sans-serif; background: linear-gradient(180deg,var(--bg),#0b1220); color: var(--muted); margin: 0; padding: 40px; }
+            .container { max-width: 900px; margin: auto; background: #1c2022; border-radius: 8px; padding: 28px; box-shadow: 0 6px 24px rgba(2,6,23,0.6);}
+            h1 { color: var(--card); margin: 0 0 10px 0; font-size: 28px; }
+            .status { font-size: 0.95em; margin-top: 12px; color: #7ef0a6; }
+            .description { font-size: 0.95em; margin-top: 20px; line-height:1.5; }
+            a.docs { display:inline-block; margin-top:20px; padding:10px 14px; background: var(--accent); color:#fff; text-decoration:none; border-radius:6px;}
+            .legal { margin-top:18px; background: #1c2022; padding:12px; border-radius:6px; color:var(--muted); font-size:0.86em;}
+            .legal h3 { color: #a9d0ff; margin:0 0 6px 0; }
+          </style>
+        </head>
+        <body>
+          <div class="container">
+            <h1>F1 Websocket Proxy</h1>
+            <div class="status">WebSocket active</div>
+            <div class="description">
+              <div>This is a websocket connection for the F1 Telemetry, captures F1 signal and sends the data with no modifications to the client.</div>
+              <div>This websocket doesn't need authorization; if you found this websocket and want to get the information please consider notifying the owner to preserve free hosting.</div>
+              <a class="docs" href="/swagger" target="_blank">Open API Docs (Swagger UI)</a>
+              <div class="legal">
+                <h3>LEGAL DISCLAIMER & TERMS OF USE</h3>
+                <p><strong>PERSONAL USE ONLY:</strong> This backend service is developed and maintained for personal, non-commercial use only. It is not intended for commercial, business, or lucrative purposes.</p>
+                <p><strong>NO COMMERCIAL INTENT:</strong> The owner of this service has no intentions to generate revenue, profit, or commercial gain from this backend. This is a personal project for educational and personal entertainment purposes.</p>
+                <p><strong>NO WARRANTIES:</strong> This service is provided "AS IS" without any warranties, express or implied. The owner makes no representations about the reliability, accuracy, or completeness of the information provided.</p>
+                <p><strong>LIMITATION OF LIABILITY:</strong> The owner of this backend service shall not be held responsible, liable, or accountable for any damages, losses, or consequences arising from the use, misuse, or inability to use this service. Users access and use this service at their own risk.</p>
+                <p><strong>USER RESPONSIBILITY:</strong> Users are solely responsible for their use of this service and must comply with all applicable laws and regulations. The owner assumes no responsibility for user actions or the consequences thereof.</p>
+                <p><strong>NO ENDORSEMENT:</strong> This service is not affiliated with, endorsed by, or sponsored by Formula 1, FIA, or any official racing organizations. All data and information are obtained from publicly available sources.</p>
+                <p><strong>ACCEPTANCE:</strong> By accessing or using this service, you acknowledge that you have read, understood, and agree to these terms. If you do not agree, please do not use this service.</p>
+              </div>
+            </div>
+          </div>
         </body>
-    </html>
-  `);
-});
+      </html>
+    `);
+  });
 
-router.get("/calendar", calendarHandle);
+  // existing calendar routes
+  router.get("/calendar", calendarHandle);
 
-router.get("/upcoming", upcomingHandle);
+  router.get("/upcoming", upcomingHandle);
 
-router.get("/download-mp3", async (req: Request, res: Response) => {
-  try {
-    const urlMP3 = req.query.url;
-    const idx = req.query.idx;
+  router.get("/download-mp3", async (req: Request, res: Response) => {
+    try {
+      const urlMP3 = req.query.url;
+      const idx = req.query.idx;
 
-    if (!urlMP3) {
-      return res.status(400).send("URL required.");
+      if (!urlMP3) {
+        return res.status(400).send("URL required.");
+      }
+
+      if (!isSafe(urlMP3.toString())) {
+        return res.status(400).send("URL not allowed.");
+      }
+
+      const response = await axios({
+        method: "get",
+        url: urlMP3.toString(),
+        responseType: "stream",
+      });
+
+      const filename = "f1telemetry-audio" + idx + ".mp3";
+      res.setHeader("Content-Disposition", "attachment; filename=" + filename);
+      res.setHeader("Content-Type", response.headers["content-type"]);
+
+      response.data.pipe(res);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Unknown error.";
+      res.status(500).send("Error at file download:" + message);
     }
+  });
 
-    if (!isSafe(urlMP3.toString())) {
-      return res.status(400).send("URL not allowed.");
+  router.get("/db/ping", async (req: Request, res: Response) => {
+    try {
+      const result = await pool.query("SELECT 1 as ok");
+      res.json({ success: true, db: result.rows[0] });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
     }
+  });
 
-    const response = await axios({
-      method: "get",
-      url: urlMP3.toString(),
-      responseType: "stream",
-    });
+  router.get("/roles/:id", async (req: Request, res: Response) => {
+    try {
+      const id = Number(req.params.id);
+      const role = await roleService.getRoleById(id);
+      if (!role)
+        return res
+          .status(404)
+          .json({ success: false, error: "Role not found" });
+      res.json({ success: true, role });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
 
-    const filename = "f1telemetry-audio" + idx + ".mp3";
-    res.setHeader("Content-Disposition", "attachment; filename=" + filename);
-    res.setHeader("Content-Type", response.headers["content-type"]);
+  router.post("/roles/update-cooldown", async (req: Request, res: Response) => {
+    try {
+      const { name, newCooldown } = req.body;
+      if (!name || typeof newCooldown !== "number") {
+        return res
+          .status(400)
+          .json({ success: false, error: "name and newCooldown required" });
+      }
+      await roleService.updateRoleCooldown(name, newCooldown);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
 
-    response.data.pipe(res);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : "Unknown error.";
-    res.status(500).send("Error at file download:" + message);
+  router.post("/users/register", async (req: Request, res: Response) => {
+    try {
+      const { username, email, password } = req.body;
+      if (!username || !email || !password) {
+        return res.status(400).json({
+          success: false,
+          error: "username, email and password required",
+        });
+      }
+      const user = await userService.register(username, email, password);
+      res.json({ success: true, user });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/users/login", async (req: Request, res: Response) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) {
+        return res
+          .status(400)
+          .json({ success: false, error: "email and password required" });
+      }
+      const result = await userService.login(email, password);
+      res.json({ success: true, ...result });
+    } catch (err) {
+      res.status(401).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/users/verify-token", async (req: Request, res: Response) => {
+    try {
+      const token = req.body.token;
+      if (!token) {
+        return res
+          .status(400)
+          .json({ success: false, error: "token required" });
+      }
+      const user = await userService.verifyToken(token);
+      res.json({ success: true, user });
+    } catch (err) {
+      res.status(401).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // Admin-only endpoints
+  
+  // Helper function to verify admin role
+  async function verifyAdminRole(token: string): Promise<boolean> {
+    try {
+      const user = await userService.verifyToken(token);
+      return user.role.name === "admin";
+    } catch {
+      return false;
+    }
   }
-});
 
-export default router;
+  // GET /users - Get all registered users (admin only)
+  router.get("/users", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const users = await userService.getAllUsers();
+      res.json({ success: true, users });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // POST /users/block/:id - Block a user by setting big cooldown (admin only)
+  router.post("/users/block/:id", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const userId = Number(req.params.id);
+      if (isNaN(userId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid user ID" });
+      }
+
+      // Set a very large cooldown (1 year in seconds)
+      const oneYearInSeconds = 365 * 24 * 60 * 60;
+      await redisClient.setCooldown(userId, oneYearInSeconds);
+
+      res.json({ success: true, message: `User ${userId} has been blocked` });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // DELETE /users/:id - Delete a user (admin only)
+  router.delete("/users/:id", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const userId = Number(req.params.id);
+      if (isNaN(userId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid user ID" });
+      }
+
+      const deletedUser = await userService.deleteUser(userId);
+      if (!deletedUser) {
+        return res
+          .status(404)
+          .json({ success: false, error: "User not found" });
+      }
+
+      res.json({ success: true, message: `User ${userId} has been deleted` });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  return router;
+}
