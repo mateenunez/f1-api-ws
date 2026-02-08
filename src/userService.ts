@@ -114,4 +114,35 @@ export class UserService {
     const res = await this.pool.query(query, [userId]);
     return res.rows[0];
   }
+
+  async updateUserRole(userId: number, roleId: number): Promise<any> {
+    try {
+      const userQuery = "SELECT id FROM users WHERE id = $1";
+      const userRes = await this.pool.query(userQuery, [userId]);
+
+      if (userRes.rows.length === 0) {
+        return null;
+      }
+
+      const roleQuery = "SELECT id FROM roles WHERE id = $1";
+      const roleRes = await this.pool.query(roleQuery, [roleId]);
+
+      if (roleRes.rows.length === 0) {
+        return null;
+      }
+
+      const updateQuery = "UPDATE users SET role_id = $1 WHERE id = $2";
+      await this.pool.query(updateQuery, [roleId, userId]);
+
+      const selectQuery =
+        "SELECT u.id, u.username, u.email, r.name as role_name FROM users u JOIN roles r ON u.role_id = r.id WHERE u.id = $1";
+      const updatedUserRes = await this.pool.query(selectQuery, [userId]);
+
+      return updatedUserRes.rows[0] || null;
+    } catch (error) {
+      throw new Error(
+        `Failed to update user role: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
 }

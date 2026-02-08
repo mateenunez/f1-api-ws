@@ -76,8 +76,6 @@ class WebSocketTelemetryServer {
                     message: "Authenticated",
                   }),
                 );
-                console.log(`User ${user.username} authenticated on WebSocket`);
-                console.log(user);
               } catch (error) {
                 ws.isAuthenticated = false;
                 ws.send(JSON.stringify({ error: "Invalid token" }));
@@ -87,7 +85,6 @@ class WebSocketTelemetryServer {
 
             case "joke:post":
               const { content, xPct, yPct, color } = data.payload;
-              console.log(data);
               if (!ws.isAuthenticated || !ws.user) {
                 ws.send(JSON.stringify({ error: "Authentication required" }));
                 return;

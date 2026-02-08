@@ -300,9 +300,42 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       description:
         "APIs for calendar, DB ping, roles and user auth (register/login).",
     },
+    components: {
+      securitySchemes: {
+        bearerAuth: {
+          type: "http",
+          scheme: "bearer",
+          bearerFormat: "JWT",
+          description: "JWT token obtained from /users/login endpoint",
+        },
+      },
+    },
+    tags: [
+      {
+        name: "Calendar",
+        description: "F1 calendar and event management",
+      },
+      {
+        name: "Database",
+        description: "Database health check",
+      },
+      {
+        name: "Roles",
+        description: "Role management endpoints",
+      },
+      {
+        name: "Users",
+        description: "User authentication and management",
+      },
+      {
+        name: "Media",
+        description: "Media file download",
+      },
+    ],
     paths: {
       "/db/ping": {
         get: {
+          tags: ["Database"],
           summary: "DB ping",
           responses: {
             "200": { description: "OK" },
@@ -312,6 +345,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/roles/{id}": {
         get: {
+          tags: ["Roles"],
           summary: "Get role by id",
           parameters: [
             {
@@ -329,7 +363,9 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/roles/update-cooldown": {
         post: {
-          summary: "Update role cooldown",
+          tags: ["Roles"],
+          summary: "Update role cooldown (admin only)",
+          security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
             content: {
@@ -348,11 +384,14 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
           responses: {
             "200": { description: "Updated" },
             "400": { description: "Bad request" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
           },
         },
       },
       "/users/register": {
         post: {
+          tags: ["Users"],
           summary: "Register user",
           requestBody: {
             required: true,
@@ -378,6 +417,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/users/login": {
         post: {
+          tags: ["Users"],
           summary: "Login user",
           requestBody: {
             required: true,
@@ -402,6 +442,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/users/verify-token": {
         post: {
+          tags: ["Users"],
           summary: "Verify user token",
           requestBody: {
             required: true,
@@ -425,6 +466,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/users": {
         get: {
+          tags: ["Users"],
           summary: "Get all registered users (admin only)",
           security: [{ bearerAuth: [] }],
           responses: {
@@ -436,6 +478,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/users/block/{id}": {
         post: {
+          tags: ["Users"],
           summary: "Block a user by setting big cooldown (admin only)",
           security: [{ bearerAuth: [] }],
           parameters: [
@@ -456,6 +499,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       },
       "/users/{id}": {
         delete: {
+          tags: ["Users"],
           summary: "Delete a user (admin only)",
           security: [{ bearerAuth: [] }],
           parameters: [
@@ -475,11 +519,53 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
           },
         },
       },
+      "/users/{id}/role": {
+        post: {
+          tags: ["Users"],
+          summary: "Change user role (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    roleId: { type: "integer" },
+                  },
+                  required: ["roleId"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "User role updated successfully" },
+            "400": { description: "Bad request - invalid user ID or role ID" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+            "404": { description: "User or role not found" },
+          },
+        },
+      },
       "/calendar": {
-        get: { summary: "Get calendar events" },
+        get: { 
+          tags: ["Calendar"],
+          summary: "Get calendar events" 
+        },
       },
       "/upcoming": {
-        get: { summary: "Get upcoming event" },
+        get: { 
+          tags: ["Calendar"],
+          summary: "Get upcoming event" 
+        },
       },
     },
   };
@@ -591,6 +677,20 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
 
   router.post("/roles/update-cooldown", async (req: Request, res: Response) => {
     try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
       const { name, newCooldown } = req.body;
       if (!name || typeof newCooldown !== "number") {
         return res
@@ -752,6 +852,49 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       }
 
       res.json({ success: true, message: `User ${userId} has been deleted` });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/users/:id/role", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const userId = Number(req.params.id);
+      if (isNaN(userId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid user ID" });
+      }
+
+      const { roleId } = req.body;
+      if (typeof roleId !== "number" || isNaN(roleId)) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid role ID" });
+      }
+
+      const updatedUser = await userService.updateUserRole(userId, roleId);
+      if (!updatedUser) {
+        return res
+          .status(404)
+          .json({ success: false, error: "User or role not found" });
+      }
+
+      res.json({ success: true, message: `User ${userId} role updated`, user: updatedUser });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
