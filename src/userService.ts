@@ -10,7 +10,7 @@ export interface User {
 }
 
 export class UserService {
-  private readonly SALT_ROUNDS = 10;
+  private readonly SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || "10");
   private readonly JWT_SECRET = process.env.JWT_SECRET;
 
   constructor(private pool: any) {}
