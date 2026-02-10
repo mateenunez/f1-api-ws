@@ -60,7 +60,7 @@ export class UserService {
       const decoded = jwt.verify(token, this.JWT_SECRET) as any;
 
       const query = `
-      SELECT u.id, u.username, r.name as role, r.cooldown_ms, r.can_be_anonymous
+      SELECT u.id, u.username, r.name as role, r.cooldown_ms
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -77,7 +77,6 @@ export class UserService {
         role: {
           name: userData.role,
           cooldown_ms: userData.cooldown_ms,
-          can_be_anonymous: userData.can_be_anonymous,
         },
       };
 
@@ -89,7 +88,7 @@ export class UserService {
 
   async findByEmail(email: string) {
     const query = `
-      SELECT u.*, r.name as role_name, r.cooldown_ms, r.can_be_anonymous 
+      SELECT u.*, r.name as role_name, r.cooldown_ms 
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.email = $1;
