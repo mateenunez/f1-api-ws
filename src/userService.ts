@@ -24,7 +24,30 @@ export class UserService {
       RETURNING id, username, role_id;
     `;
     const res = await this.pool.query(query, [username, email, hash]);
-    return res.rows[0];
+    const created = res.rows[0];
+
+    // Fetch role name and cooldown for the created user
+    const infoQuery = `
+      SELECT u.id, u.username, r.name as role_name, r.cooldown_ms
+      FROM users u
+      JOIN roles r ON u.role_id = r.id
+      WHERE u.id = $1;
+    `;
+    const infoRes = await this.pool.query(infoQuery, [created.id]);
+    const userData = infoRes.rows[0];
+
+    const user = {
+      id: userData.id,
+      username: userData.username,
+      role: {
+        name: userData.role_name,
+        cooldown_ms: userData.cooldown_ms,
+      },
+    };
+
+    const token = this.generateToken({ id: user.id, role_name: user.role.name, cooldown_ms: user.role.cooldown_ms });
+
+    return { user, token };
   }
 
   async login(email: string, passwordPlain: string) {
@@ -35,7 +58,14 @@ export class UserService {
     const token = this.generateToken(user);
 
     return {
-      user: { id: user.id, username: user.username, role: user.role_name },
+      user: {
+        id: user.id,
+        username: user.username,
+        role: {
+          name: user.role_name,
+          cooldown_ms: user.cooldown_ms,
+        },
+      },
       token,
     };
   }
@@ -60,7 +90,7 @@ export class UserService {
       const decoded = jwt.verify(token, this.JWT_SECRET) as any;
 
       const query = `
-      SELECT u.id, u.username, r.name as role, r.cooldown_ms
+      SELECT u.id, u.username, r.name, r.id as role_id, r.cooldown_ms
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -75,8 +105,9 @@ export class UserService {
         id: userData.id,
         username: userData.username,
         role: {
-          name: userData.role,
+          name: userData.name,
           cooldown_ms: userData.cooldown_ms,
+          id: userData.role_id,
         },
       };
 

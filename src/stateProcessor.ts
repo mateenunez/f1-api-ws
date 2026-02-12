@@ -25,7 +25,7 @@ class StateProcessor implements StateProvider {
   }
 
   getSessionId() {
-    return this.fullState.R.SessionInfo.Meeting.Key ?? "";
+    return this.fullState.R?.SessionInfo?.Meeting?.Key ?? "";
   }
 
   async saveToRedis(feedName: string, data: any): Promise<void> {
@@ -54,11 +54,11 @@ class StateProcessor implements StateProvider {
       let items = [];
 
       if (feedName === "TeamRadio") {
-        items = this.fullState.R.TeamRadio.Captures || [];
+        items = this.fullState?.R?.TeamRadio?.Captures || [];
       } else if (feedName === "RaceControlMessages") {
-        items = this.fullState.R.RaceControlMessages.Messages || [];
+        items = this.fullState?.R?.RaceControlMessages?.Messages || [];
       } else {
-        items = this.fullState.R.RaceControlMessagesEs?.Messages || [];
+        items = this.fullState?.R?.RaceControlMessagesEs?.Messages || [];
       }
       if (!items || items.length === 0) return [];
 
@@ -66,7 +66,7 @@ class StateProcessor implements StateProvider {
         (it) => it !== null
       );
     } catch (err) {
-      console.error(`Error fetching ${feedName} from Redis:`, err);
+      console.log(`Error fetching ${feedName} from Redis:`, err);
       return [];
     }
   }

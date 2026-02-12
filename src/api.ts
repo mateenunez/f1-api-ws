@@ -713,8 +713,9 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
           error: "username, email and password required",
         });
       }
-      const user = await userService.register(username, email, password);
-      res.json({ success: true, user });
+      const result = await userService.register(username, email, password);
+      // result contains { user, token }
+      res.json({ success: true, ...result });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }

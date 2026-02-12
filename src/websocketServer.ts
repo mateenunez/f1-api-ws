@@ -83,15 +83,22 @@ class WebSocketTelemetryServer {
               }
               break;
 
-            case "joke:post":
-              const { content, xPct, yPct, color } = data.payload;
+            case "chat:post": {
+              const { content, language } = data.payload || {};
+
               if (!ws.isAuthenticated || !ws.user) {
                 ws.send(JSON.stringify({ error: "Authentication required" }));
                 return;
               }
 
-              if (!content || content.length > 150) {
-                console.log("Joke is too long or empty.");
+              if (!content || typeof content !== "string" || content.trim().length === 0) {
+                ws.send(JSON.stringify({ error: "Message is empty" }));
+                return;
+              }
+
+              // enforce max length (match frontend limit)
+              if (content.length > 200) {
+                ws.send(JSON.stringify({ error: "Message too long" }));
                 return;
               }
 
@@ -101,34 +108,39 @@ class WebSocketTelemetryServer {
                 return;
               }
 
-              const jokePayload = {
+              const lang = language === "es" ? "es" : "en";
+
+              const chatPayload = {
                 id: crypto.randomUUID(),
                 content: this.sanitize(content),
-                coords: { xPct, yPct },
-                cooldown: ws.user.role.cooldown_ms,
-                color: color || "#FFFFFF",
                 user: {
                   id: ws.user.id,
                   username: ws.user.username,
-                }
+                  color: data.payload.color,
+                  role_id: ws.user.role.id,
+                },
+                language: lang,
+                cooldown: ws.user.role.cooldown_ms,
+                timestamp: new Date().toISOString(),
               };
+
+              const eventName = lang === "es" ? "ChatMessageEs" : "ChatMessageEn";
 
               const telemetryMessage = {
                 M: [
                   {
                     H: "Streaming",
                     M: "feed",
-                    A: [
-                      "Joke", 
-                      jokePayload,
-                      new Date().toISOString(), 
-                    ],
+                    A: [eventName, chatPayload, new Date().toISOString()],
                   },
                 ],
               };
+
+              // set cooldown in seconds
               redis.setCooldown(ws.user.id, ws.user.role.cooldown_ms / 1000);
               eventBus.emit("broadcast", JSON.stringify(telemetryMessage));
               break;
+            }
             default:
               console.log("Unhandled event.", data.type);
           }

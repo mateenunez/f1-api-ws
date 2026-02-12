@@ -42,7 +42,7 @@ export class DatabaseService {
 
       await client.query(`
         INSERT INTO roles (name, cooldown_ms)
-        VALUES ('base', 10000), ('premium', 3000), ('admin', 1000)
+        VALUES ('base', 5000), ('premium', 1000), ('admin', 1000)
         ON CONFLICT (name) DO NOTHING;
       `);
 
