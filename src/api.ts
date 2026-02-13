@@ -710,7 +710,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       if (!username || !email || !password) {
         return res.status(400).json({
           success: false,
-          error: "username, email and password required",
+          error: "VALIDATION_REQUIRED",
         });
       }
       const result = await userService.register(username, email, password);
@@ -727,7 +727,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       if (!email || !password) {
         return res
           .status(400)
-          .json({ success: false, error: "email and password required" });
+          .json({ success: false, error: "VALIDATION_REQUIRED" });
       }
       const result = await userService.login(email, password);
       res.json({ success: true, ...result });

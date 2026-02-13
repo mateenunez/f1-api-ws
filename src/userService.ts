@@ -52,9 +52,9 @@ export class UserService {
 
   async login(email: string, passwordPlain: string) {
     const user = await this.findByEmail(email);
-    if (!user) throw new Error("Usuario no encontrado");
+    if (!user) throw new Error("USER_NOT_FOUND");
     const isMatch = await bcrypt.compare(passwordPlain, user.password_hash);
-    if (!isMatch) throw new Error("Contraseña incorrecta");
+    if (!isMatch) throw new Error("WRONG_PASSWORD");
     const token = this.generateToken(user);
 
     return {
@@ -113,7 +113,7 @@ export class UserService {
 
       return user;
     } catch (error) {
-      throw new Error("Invalid or corrupt token");
+      throw new Error("INVALID_TOKEN");
     }
   }
 
