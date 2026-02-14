@@ -138,6 +138,8 @@ class WebSocketTelemetryServer {
 
               // set cooldown in seconds
               redis.setCooldown(ws.user.id, ws.user.role.cooldown_ms / 1000);
+              // set user as active
+              redis.setChatActivity(ws.user.id, ws.user.role.name);
               eventBus.emit("broadcast", JSON.stringify(telemetryMessage));
               break;
             }

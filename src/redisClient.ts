@@ -1,5 +1,13 @@
 import Redis, { Redis as RedisType } from "ioredis";
 
+interface UserStats {
+  base: number;
+  premium: number;
+  admin: number;
+  total: number;
+  [key: string]: number;
+}
+
 class RedisClient {
   private client: RedisType;
   private silent = false;
@@ -72,6 +80,52 @@ class RedisClient {
   async hasCooldown(userId: number) {
     const cooldown = await this.client.exists(`cooldown:${userId}`);
     return cooldown === 1;
+  }
+
+  async setChatActivity(userId: number, role: string) {
+    await this.client.set(`active:${userId}`, role, "EX", 300);
+  }
+
+  async getActiveUsersStats() {
+    let cursor = "0";
+    const stats: UserStats = {
+      base: 0,
+      premium: 0,
+      admin: 0,
+      total: 0,
+    };
+
+    try {
+      do {
+        const [newCursor, keys] = await this.client.scan(
+          cursor,
+          "MATCH",
+          "active:*",
+          "COUNT",
+          100,
+        );
+        cursor = newCursor;
+
+        if (keys.length > 0) {
+          const values = await this.client.mget(keys);
+
+          values.forEach((value) => {
+            if (value && stats.hasOwnProperty(value)) {
+              stats[value]++;
+              stats.total++;
+            }
+          });
+        }
+      } while (cursor !== "0");
+
+      return stats;
+    } catch (error) {
+      console.error(
+        "Error obteniendo estadísticas de usuarios activos:",
+        error,
+      );
+      return stats;
+    }
   }
 
   async getList(

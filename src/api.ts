@@ -187,7 +187,10 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
   return orderedArray;
 }
 
-export default function (databaseService: DatabaseService, redisClient: RedisClient) {
+export default function (
+  databaseService: DatabaseService,
+  redisClient: RedisClient,
+) {
   const router = express.Router();
   const pool = databaseService.getPool();
   const roleService = new RoleService(pool);
@@ -464,6 +467,38 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
           },
         },
       },
+      "/users/find-by-email/{email}": {
+        get: {
+          tags: ["Users"],
+          summary: "Find a user by its email (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "email",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": { description: "User found succesfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/users/active": {
+        get: {
+          tags: ["Users"],
+          summary: "Find chat active users (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Active users retrieved successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
       "/users": {
         get: {
           tags: ["Users"],
@@ -556,15 +591,15 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
         },
       },
       "/calendar": {
-        get: { 
+        get: {
           tags: ["Calendar"],
-          summary: "Get calendar events" 
+          summary: "Get calendar events",
         },
       },
       "/upcoming": {
-        get: { 
+        get: {
           tags: ["Calendar"],
-          summary: "Get upcoming event" 
+          summary: "Get upcoming event",
         },
       },
     },
@@ -599,7 +634,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
             <div class="description">
               <div>This is a websocket connection for the F1 Telemetry, captures F1 signal and sends the data with no modifications to the client.</div>
               <div>This websocket doesn't need authorization; if you found this websocket and want to get the information please consider notifying the owner to preserve free hosting.</div>
-              <a class="docs" href="/swagger" target="_blank">Open API Docs (Swagger UI)</a>
+              <a class="docs" href="/swagger">Open API Docs (Swagger UI)</a>
               <div class="legal">
                 <h3>LEGAL DISCLAIMER & TERMS OF USE</h3>
                 <p><strong>PERSONAL USE ONLY:</strong> This backend service is developed and maintained for personal, non-commercial use only. It is not intended for commercial, business, or lucrative purposes.</p>
@@ -617,7 +652,6 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
     `);
   });
 
-  // existing calendar routes
   router.get("/calendar", calendarHandle);
 
   router.get("/upcoming", upcomingHandle);
@@ -752,7 +786,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
   });
 
   // Admin-only endpoints
-  
+
   // Helper function to verify admin role
   async function verifyAdminRole(token: string): Promise<boolean> {
     try {
@@ -786,6 +820,42 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
       res.status(500).json({ success: false, error: (err as Error).message });
     }
   });
+
+  // GET /users/find-by-email/:email - Find a user by its email (admin only)
+  router.get(
+    "/users/find-by-email/:email",
+    async (req: Request, res: Response) => {
+      try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) {
+          return res
+            .status(401)
+            .json({ success: false, error: "Authorization token required" });
+        }
+
+        const isAdmin = await verifyAdminRole(token);
+        if (!isAdmin) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Admin role required" });
+        }
+
+        const userEmail = req.params.email;
+        if (!userEmail) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid user email" });
+        }
+        const user = await userService.findByEmail(userEmail);
+        console.log(user);
+        res.json({ success: true, user });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, error: (error as Error).message });
+      }
+    },
+  );
 
   // POST /users/block/:id - Block a user by setting big cooldown (admin only)
   router.post("/users/block/:id", async (req: Request, res: Response) => {
@@ -858,6 +928,7 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
     }
   });
 
+  // POST /users/:id/role - Change user role (admin only)
   router.post("/users/:id/role", async (req: Request, res: Response) => {
     try {
       const token = req.headers.authorization?.split(" ")[1];
@@ -895,9 +966,36 @@ export default function (databaseService: DatabaseService, redisClient: RedisCli
           .json({ success: false, error: "User or role not found" });
       }
 
-      res.json({ success: true, message: `User ${userId} role updated`, user: updatedUser });
+      res.json({
+        success: true,
+        message: `User ${userId} role updated`,
+        user: updatedUser,
+      });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.get("/users/active", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const activeUsersStats = await redisClient.getActiveUsersStats();
+      res.json({ success: true, activeUsersStats });
+    } catch (error) {
+      res.status(500).json({ success: false, error: (error as Error).message });
     }
   });
 
