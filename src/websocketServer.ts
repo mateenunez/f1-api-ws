@@ -96,7 +96,6 @@ class WebSocketTelemetryServer {
                 return;
               }
 
-              // enforce max length (match frontend limit)
               if (content.length > 200) {
                 ws.send(JSON.stringify({ error: "Message too long" }));
                 return;
@@ -117,12 +116,18 @@ class WebSocketTelemetryServer {
                   id: ws.user.id,
                   username: ws.user.username,
                   color: data.payload.color,
+                  badge: data.payload.badge,
                   role_id: ws.user.role.id,
                 },
                 language: lang,
                 cooldown: ws.user.role.cooldown_ms,
                 timestamp: new Date().toISOString(),
               };
+
+              if (chatPayload.user.color !== ws.user.chat_color || chatPayload.user.badge !== ws.user.chat_badge) {
+                // update in database
+                await this.userService.updateUserAppearance(ws.user.id, chatPayload.user.color, chatPayload.user.badge);
+              }
 
               const eventName = lang === "es" ? "ChatMessageEs" : "ChatMessageEn";
 
