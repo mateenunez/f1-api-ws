@@ -329,11 +329,7 @@ export default function (
       {
         name: "Users",
         description: "User authentication and management",
-      },
-      {
-        name: "Media",
-        description: "Media file download",
-      },
+      }
     ],
     paths: {
       "/db/ping": {
@@ -484,6 +480,32 @@ export default function (
             "200": { description: "User found succesfully" },
             "401": { description: "Unauthorized - token required" },
             "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/users/base": {
+        get: {
+          tags: ["Users"],
+          summary: "Get all base users (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Base users retrieved successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Internal server error" },
+          },
+        },
+      },
+      "/users/premium": {
+        get: {
+          tags: ["Users"],
+          summary: "Get all premium users (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Premium users retrieved successfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Internal server error" },
           },
         },
       },
@@ -791,7 +813,7 @@ export default function (
   async function verifyAdminRole(token: string): Promise<boolean> {
     try {
       const user = await userService.verifyToken(token);
-      return user.role.name === "admin";
+      return user.role.id === 3;
     } catch {
       return false;
     }
@@ -816,6 +838,54 @@ export default function (
 
       const users = await userService.getAllUsers();
       res.json({ success: true, users });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // GET /users/base - Get all base users (admin only)
+  router.get("/users/base", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const baseUsers = await userService.getUsersByRole(1);
+      res.json({ success: true, users: baseUsers });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // GET /users/premium - Get all premium users (admin only)
+  router.get("/users/premium", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const premiumUsers = await userService.getUsersByRole(2);
+      res.json({ success: true, users: premiumUsers });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }

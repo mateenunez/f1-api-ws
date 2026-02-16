@@ -133,7 +133,7 @@ export class UserService {
         },
         created_at: userData.created_at,
       };
-      
+
       return user;
     } catch (error) {
       throw new Error("INVALID_TOKEN");
@@ -159,6 +159,17 @@ export class UserService {
       ORDER BY u.created_at DESC;
     `;
     const res = await this.pool.query(query);
+    return res.rows;
+  }
+
+  async getUsersByRole(roleId: number): Promise<any[]> {
+    const query = `
+    SELECT u.id, u.username, u.email, u.chat_color, u.chat_badge, r.name as role_name 
+    FROM users u 
+    JOIN roles r ON u.role_id = r.id 
+    WHERE u.role_id = $1
+  `;
+    const res = await this.pool.query(query, [roleId]);
     return res.rows;
   }
 
