@@ -4,8 +4,14 @@ import jwt from "jsonwebtoken";
 export interface User {
   id: number;
   username: string;
-  role_id: string;
+  role: {
+    name: string;
+    cooldown_ms: number;
+    id: number;
+  };
   email: string;
+  chat_color: string;
+  chat_badge?: string;
   created_at: Date;
 }
 
@@ -36,38 +42,51 @@ export class UserService {
     const infoRes = await this.pool.query(infoQuery, [created.id]);
     const userData = infoRes.rows[0];
 
-    const user = {
+    const user: User = {
       id: userData.id,
+      email: userData.email,
       username: userData.username,
+      chat_color: userData.chat_color,
+      chat_badge: userData.chat_badge,
       role: {
+        id: userData.role_id,
         name: userData.role_name,
         cooldown_ms: userData.cooldown_ms,
       },
+      created_at: userData.created_at,
     };
 
-    const token = this.generateToken({ id: user.id, role_name: user.role.name, cooldown_ms: user.role.cooldown_ms });
+    const token = this.generateToken({
+      id: user.id,
+      role_name: user.role.name,
+      cooldown_ms: user.role.cooldown_ms,
+    });
 
     return { user, token };
   }
 
   async login(email: string, passwordPlain: string) {
-    const user = await this.findByEmail(email);
-    if (!user) throw new Error("USER_NOT_FOUND");
-    const isMatch = await bcrypt.compare(passwordPlain, user.password_hash);
+    const userData = await this.findByEmail(email);
+    if (!userData) throw new Error("USER_NOT_FOUND");
+    const isMatch = await bcrypt.compare(passwordPlain, userData.password_hash);
     if (!isMatch) throw new Error("WRONG_PASSWORD");
-    const token = this.generateToken(user);
+    const token = this.generateToken(userData);
 
-    return {
-      user: {
-        id: user.id,
-        username: user.username,
-        role: {
-          name: user.role_name,
-          cooldown_ms: user.cooldown_ms,
-        },
+    const user: User = {
+      id: userData.id,
+      email: userData.email,
+      username: userData.username,
+      chat_color: userData.chat_color,
+      chat_badge: userData.chat_badge,
+      role: {
+        id: userData.role_id,
+        name: userData.role_name,
+        cooldown_ms: userData.cooldown_ms,
       },
-      token,
+      created_at: userData.created_at,
     };
+
+    return { user, token };
   }
 
   private generateToken(user: any) {
@@ -90,7 +109,7 @@ export class UserService {
       const decoded = jwt.verify(token, this.JWT_SECRET) as any;
 
       const query = `
-      SELECT u.id, u.username, r.name, r.id as role_id, r.cooldown_ms
+      SELECT u.id, u.username, u.chat_color, u.chat_badge, r.name, r.id as role_id, r.cooldown_ms
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -101,16 +120,20 @@ export class UserService {
 
       const userData = res.rows[0];
 
-      const user = {
+      const user: User = {
         id: userData.id,
+        email: userData.email,
         username: userData.username,
+        chat_color: userData.chat_color,
+        chat_badge: userData.chat_badge,
         role: {
-          name: userData.name,
-          cooldown_ms: userData.cooldown_ms,
           id: userData.role_id,
+          name: userData.role_name,
+          cooldown_ms: userData.cooldown_ms,
         },
+        created_at: userData.created_at,
       };
-
+      
       return user;
     } catch (error) {
       throw new Error("INVALID_TOKEN");
@@ -172,6 +195,38 @@ export class UserService {
     } catch (error) {
       throw new Error(
         `Failed to update user role: ${error instanceof Error ? error.message : "Unknown error"}`,
+      );
+    }
+  }
+
+  async updateUserAppearance(
+    userId: number,
+    color: string,
+    badge: string,
+  ): Promise<any> {
+    try {
+      const userQuery =
+        "SELECT chat_color, chat_badge FROM users WHERE id = $1";
+      const userRes = await this.pool.query(userQuery, [userId]);
+
+      if (userRes.rows.length === 0 || userRes.rows[0].role_id === 1) {
+        // If does not exist or if is base user, do not allow updating appearance
+        return null;
+      }
+
+      const updateQuery = `
+      UPDATE users 
+      SET chat_color = $1, chat_badge = $2 
+      WHERE id = $3 
+      RETURNING id, username, chat_color, chat_badge
+    `;
+
+      const result = await this.pool.query(updateQuery, [color, badge, userId]);
+
+      return result.rows[0] || null;
+    } catch (error) {
+      throw new Error(
+        `Failed to update user appearance: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   }

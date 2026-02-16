@@ -46,6 +46,12 @@ export class DatabaseService {
         ON CONFLICT (name) DO NOTHING;
       `);
 
+      await client.query(`
+        ALTER TABLE users 
+        ADD COLUMN IF NOT EXISTS chat_color VARCHAR(7) DEFAULT '',
+        ADD COLUMN IF NOT EXISTS chat_badge VARCHAR(20) DEFAULT '';
+      `);
+
       // Create admin user if it doesn't exist
       await this.createAdminUserIfNotExists(client);
 
