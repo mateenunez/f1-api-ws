@@ -151,6 +151,17 @@ export class UserService {
     return res.rows[0];
   }
 
+  async findByUsername(username: string) {
+    const query = `
+      SELECT u.*, r.name as role_name, r.cooldown_ms 
+      FROM users u
+      JOIN roles r ON u.role_id = r.id
+      WHERE u.username = $1;
+    `;
+    const res = await this.pool.query(query, [username]);
+    return res.rows[0];
+  }
+
   async getAllUsers() {
     const query = `
       SELECT u.id, u.username, u.email, u.created_at, r.name as role_name

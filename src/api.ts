@@ -299,7 +299,7 @@ export default function (
     openapi: "3.0.0",
     info: {
       title: "F1 Telemetry API",
-      version: "1.0.0",
+      version: "1.0.5",
       description:
         "APIs for calendar, DB ping, roles and user auth (register/login).",
     },
@@ -329,7 +329,7 @@ export default function (
       {
         name: "Users",
         description: "User authentication and management",
-      }
+      },
     ],
     paths: {
       "/db/ping": {
@@ -483,6 +483,26 @@ export default function (
           },
         },
       },
+      "/users/find-by-username/{username}": {
+        get: {
+          tags: ["Users"],
+          summary: "Find a user by its username (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "username",
+              in: "path",
+              required: true,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": { description: "User found succesfully" },
+            "401": { description: "Unauthorized - token required" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
       "/users/base": {
         get: {
           tags: ["Users"],
@@ -533,10 +553,10 @@ export default function (
           },
         },
       },
-      "/users/block/{id}": {
+      "/users/set-cooldown/{id}": {
         post: {
           tags: ["Users"],
-          summary: "Block a user by setting big cooldown (admin only)",
+          summary: "Set a user's cooldown (admin only)",
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -546,11 +566,51 @@ export default function (
               schema: { type: "integer" },
             },
           ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    days: {
+                      type: "integer",
+                      example: 7,
+                      description: "Number of days for the cooldown",
+                    },
+                  },
+                  required: ["days"],
+                },
+              },
+            },
+          },
           responses: {
-            "200": { description: "User blocked successfully" },
+            "200": { description: "Cooldown set successfully" },
             "401": { description: "Unauthorized - token required" },
             "403": { description: "Forbidden - admin role required" },
             "400": { description: "Bad request - invalid user ID" },
+          },
+        },
+      },
+      "/users/delete-cooldown/{id}": {
+        delete: {
+          tags: ["Users"],
+          summary: "Remove a user's cooldown/block (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "id",
+              in: "path",
+              required: true,
+              schema: { type: "integer" },
+              description: "User ID to unblock",
+            },
+          ],
+          responses: {
+            "200": { description: "User unblocked successfully" },
+            "404": { description: "User was not blocked" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden" },
           },
         },
       },
@@ -627,7 +687,6 @@ export default function (
     },
   };
 
-  // mount swagger UI at /swagger
   router.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
   router.get("/", async (req: Request, res: Response) => {
@@ -639,8 +698,8 @@ export default function (
           <title>F1 WebSocket Proxy</title>
           <style>
             :root { --bg: #1c2022; --card: #ffffff; --muted: #c7d0da; --accent: #4ab855; }
-            body { font-family: Arial, sans-serif; background: linear-gradient(180deg,var(--bg),#0b1220); color: var(--muted); margin: 0; padding: 40px; }
-            .container { max-width: 900px; margin: auto; background: #1c2022; border-radius: 8px; padding: 28px; box-shadow: 0 6px 24px rgba(2,6,23,0.6);}
+            body { height: 100%; font-family: Arial, sans-serif; background: linear-gradient(180deg,var(--bg),#0b1220); color: var(--muted); margin: 0; padding: 40px; }
+            .container { max-width: 900px; height: 100%; margin: auto; background: #1c2022; border-radius: 8px; padding: 28px; box-shadow: 0 6px 24px rgba(2,6,23,0.6);}
             h1 { color: var(--card); margin: 0 0 10px 0; font-size: 28px; }
             .status { font-size: 0.95em; margin-top: 12px; color: #7ef0a6; }
             .description { font-size: 0.95em; margin-top: 20px; line-height:1.5; }
@@ -837,7 +896,8 @@ export default function (
       }
 
       const users = await userService.getAllUsers();
-      res.json({ success: true, users });
+      const usersLength = users.length;
+      res.json({ success: true, count: usersLength, users });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
@@ -861,7 +921,8 @@ export default function (
       }
 
       const baseUsers = await userService.getUsersByRole(1);
-      res.json({ success: true, users: baseUsers });
+      const baseUsersLength = baseUsers.length;
+      res.json({ success: true, count: baseUsersLength, users: baseUsers });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
@@ -885,7 +946,12 @@ export default function (
       }
 
       const premiumUsers = await userService.getUsersByRole(2);
-      res.json({ success: true, users: premiumUsers });
+      const premiumUsersLength = premiumUsers.length;
+      res.json({
+        success: true,
+        count: premiumUsersLength,
+        users: premiumUsers
+      });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
@@ -927,39 +993,135 @@ export default function (
     },
   );
 
-  // POST /users/block/:id - Block a user by setting big cooldown (admin only)
-  router.post("/users/block/:id", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
+  // GET /users/find-by-username/:username - Find a user by its username (admin only)
+  router.get(
+    "/users/find-by-username/:username",
+    async (req: Request, res: Response) => {
+      try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) {
+          return res
+            .status(401)
+            .json({ success: false, error: "Authorization token required" });
+        }
+
+        const isAdmin = await verifyAdminRole(token);
+        if (!isAdmin) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Admin role required" });
+        }
+
+        const userUsername = req.params.username;
+        if (!userUsername) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid user username" });
+        }
+        const user = await userService.findByUsername(userUsername);
+        console.log(user);
+        res.json({ success: true, user });
+      } catch (error) {
+        res
+          .status(500)
+          .json({ success: false, error: (error as Error).message });
       }
+    },
+  );
 
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
+  // POST /users/set-cooldown/:id - Set a user's cooldown (admin only)
+  router.post(
+    "/users/set-cooldown/:id",
+    async (req: Request, res: Response) => {
+      try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) {
+          return res
+            .status(401)
+            .json({ success: false, error: "Authorization token required" });
+        }
+
+        const isAdmin = await verifyAdminRole(token);
+        if (!isAdmin) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Admin role required" });
+        }
+
+        const userId = Number(req.params.id);
+        if (isNaN(userId)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid user ID" });
+        }
+
+        const days = Number(req.body.days) || 1; // Default to 1 day if not
+
+        if (!days || typeof days !== "number" || days <= 0) {
+          return res.status(400).json({
+            success: false,
+            error: "A valid number of days is required in the request body",
+          });
+        }
+
+        const newCooldown = days * 24 * 60 * 60;
+        await redisClient.setCooldown(userId, newCooldown);
+
+        res.json({
+          success: true,
+          message: `User ${userId} has been given a cooldown of ${days} day(s)`,
+        });
+      } catch (err) {
+        res.status(500).json({ success: false, error: (err as Error).message });
       }
+    },
+  );
 
-      const userId = Number(req.params.id);
-      if (isNaN(userId)) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid user ID" });
+  // DELETE /users/delete-cooldown/:id - Remove user cooldown (admin only)
+  router.delete(
+    "/users/delete-cooldown/:id",
+    async (req: Request, res: Response) => {
+      try {
+        const token = req.headers.authorization?.split(" ")[1];
+        if (!token) {
+          return res
+            .status(401)
+            .json({ success: false, error: "Authorization token required" });
+        }
+
+        const isAdmin = await verifyAdminRole(token);
+        if (!isAdmin) {
+          return res
+            .status(403)
+            .json({ success: false, error: "Admin role required" });
+        }
+
+        const userId = Number(req.params.id);
+
+        if (isNaN(userId)) {
+          return res
+            .status(400)
+            .json({ success: false, error: "Invalid user ID" });
+        }
+
+        const unblocked = await redisClient.deleteCooldown(userId);
+
+        if (!unblocked) {
+          return res.status(404).json({
+            success: false,
+            error: "User was not blocked or cooldown already expired",
+          });
+        }
+
+        res.json({
+          success: true,
+          message: `User ${userId} has been unblocked successfully`,
+        });
+      } catch (err) {
+        res.status(500).json({ success: false, error: (err as Error).message });
       }
-
-      // Set a very large cooldown (1 year in seconds)
-      const oneYearInSeconds = 365 * 24 * 60 * 60;
-      await redisClient.setCooldown(userId, oneYearInSeconds);
-
-      res.json({ success: true, message: `User ${userId} has been blocked` });
-    } catch (err) {
-      res.status(500).json({ success: false, error: (err as Error).message });
-    }
-  });
+    },
+  );
 
   // DELETE /users/:id - Delete a user (admin only)
   router.delete("/users/:id", async (req: Request, res: Response) => {
@@ -1046,6 +1208,7 @@ export default function (
     }
   });
 
+  // GET /users/active - Find chat active users (admin only)
   router.get("/users/active", async (req: Request, res: Response) => {
     try {
       const token = req.headers.authorization?.split(" ")[1];

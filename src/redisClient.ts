@@ -82,6 +82,11 @@ class RedisClient {
     return cooldown === 1;
   }
 
+  async deleteCooldown(userId: number): Promise<boolean> {
+    const result = await this.client.del(`cooldown:${userId}`);
+    return result === 1;
+  }
+
   async setChatActivity(userId: number, role: string) {
     await this.client.set(`active:${userId}`, role, "EX", 300);
   }
