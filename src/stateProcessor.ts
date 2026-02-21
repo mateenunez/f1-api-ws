@@ -6,6 +6,7 @@ interface FullState {
 
 interface StateProvider {
   getState(): FullState;
+  saveChatMessage(payload: any, channel: string): void;
 }
 class StateProcessor implements StateProvider {
   fullState: FullState;
@@ -45,7 +46,7 @@ class StateProcessor implements StateProvider {
   }
 
   async getListFromRedis(
-    feedName: string
+    feedName: string,
   ): Promise<Array<{ text: string | null }>> {
     try {
       const sessionId = this.getSessionId();
@@ -63,7 +64,7 @@ class StateProcessor implements StateProvider {
       if (!items || items.length === 0) return [];
 
       return (await this.redis.getList(sessionId, feedName, items)).filter(
-        (it) => it !== null
+        (it) => it !== null,
       );
     } catch (err) {
       console.log(`Error fetching ${feedName} from Redis:`, err);
@@ -78,7 +79,7 @@ class StateProcessor implements StateProvider {
     const existingCaptures = this.fullState.R.TeamRadio?.Captures || [];
     const mergedCaptures = existingCaptures.map((capture: any) => {
       const redisCapture = redisCaptures.find(
-        (redisCapture: any) => capture.Utc === redisCapture.Utc
+        (redisCapture: any) => capture.Utc === redisCapture.Utc,
       );
       if (redisCapture) return redisCapture;
       else return capture;
@@ -117,6 +118,23 @@ class StateProcessor implements StateProvider {
       } else {
         target[key] = source[key];
       }
+    }
+  }
+
+  saveChatMessage(payload: any, channel: string) {
+    if (!this.fullState.R[channel]) {
+      this.fullState.R[channel] = { Messages: [] };
+    }
+
+    const messages = this.fullState.R[channel].Messages;
+
+    // is a retransmited message
+    payload.fromRetransmition = true;
+
+    messages.push(payload);
+
+    if (messages.length > 5) {
+      messages.shift();
     }
   }
 

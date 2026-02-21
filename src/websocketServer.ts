@@ -91,7 +91,11 @@ class WebSocketTelemetryServer {
                 return;
               }
 
-              if (!content || typeof content !== "string" || content.trim().length === 0) {
+              if (
+                !content ||
+                typeof content !== "string" ||
+                content.trim().length === 0
+              ) {
                 ws.send(JSON.stringify({ error: "Message is empty" }));
                 return;
               }
@@ -124,12 +128,20 @@ class WebSocketTelemetryServer {
                 timestamp: new Date().toISOString(),
               };
 
-              if (chatPayload.user.color !== ws.user.chat_color || chatPayload.user.badge !== ws.user.chat_badge) {
+              if (
+                chatPayload.user.color !== ws.user.chat_color ||
+                chatPayload.user.badge !== ws.user.chat_badge
+              ) {
                 // update in database
-                await this.userService.updateUserAppearance(ws.user.id, chatPayload.user.color, chatPayload.user.badge);
+                await this.userService.updateUserAppearance(
+                  ws.user.id,
+                  chatPayload.user.color,
+                  chatPayload.user.badge,
+                );
               }
 
-              const eventName = lang === "es" ? "ChatMessageEs" : "ChatMessageEn";
+              const eventName =
+                lang === "es" ? "ChatMessageEs" : "ChatMessageEn";
 
               const telemetryMessage = {
                 M: [
@@ -145,6 +157,9 @@ class WebSocketTelemetryServer {
               redis.setCooldown(ws.user.id, ws.user.role.cooldown_ms / 1000);
               // set user as active
               redis.setChatActivity(ws.user.id, ws.user.role.name);
+              // save chat message
+              this.stateProcessor.saveChatMessage(chatPayload, eventName);
+              // broadcast
               eventBus.emit("broadcast", JSON.stringify(telemetryMessage));
               break;
             }
