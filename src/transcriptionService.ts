@@ -20,8 +20,8 @@ class TranscriptionService {
   private backoffTimer?: NodeJS.Timeout;
   private backoffPromise: Promise<void> | null = null;
 
-  constructor(apiKey?: string) {
-    const key = apiKey ?? process.env.ASSEMBLYAI_API_KEY;
+  constructor() {
+    const key = process.env.ASSEMBLYAI_API_KEY;
     if (!key)
       throw new Error("AssemblyAI API key not provided (ASSEMBLYAI_API_KEY)");
     this.client = new AssemblyAI({ apiKey: key });

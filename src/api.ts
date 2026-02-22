@@ -195,6 +195,9 @@ export default function (
   const pool = databaseService.getPool();
   const roleService = new RoleService(pool);
   const userService = new UserService(pool);
+  const paginationLimit = 50;
+  const premiumRoleId = 2;
+  const baseRoleId = 1;
 
   async function calendarHandle(req: Request, res: Response) {
     try {
@@ -506,10 +509,35 @@ export default function (
       "/users/base": {
         get: {
           tags: ["Users"],
-          summary: "Get all base users (admin only)",
+          summary: "Get base users with pagination (admin only)",
           security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "page",
+              in: "query",
+              description: "Page number to retrieve",
+              required: false,
+              schema: {
+                type: "integer",
+                default: 1,
+              },
+            },
+          ],
           responses: {
-            "200": { description: "Base users retrieved successfully" },
+            "200": {
+              description: "Base users retrieved successfully",
+              content: {
+                "application/json": {
+                  example: {
+                    success: true,
+                    count: 120,
+                    totalPages: 3,
+                    currentPage: 1,
+                    users: [],
+                  },
+                },
+              },
+            },
             "401": { description: "Unauthorized - token required" },
             "403": { description: "Forbidden - admin role required" },
             "500": { description: "Internal server error" },
@@ -519,10 +547,35 @@ export default function (
       "/users/premium": {
         get: {
           tags: ["Users"],
-          summary: "Get all premium users (admin only)",
+          summary: "Get premium users with pagination (admin only)",
           security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "page",
+              in: "query",
+              description: "Page number to retrieve",
+              required: false,
+              schema: {
+                type: "integer",
+                default: 1,
+              },
+            },
+          ],
           responses: {
-            "200": { description: "Premium users retrieved successfully" },
+            "200": {
+              description: "Premium users retrieved successfully",
+              content: {
+                "application/json": {
+                  example: {
+                    success: true,
+                    count: 45,
+                    totalPages: 1,
+                    currentPage: 1,
+                    users: [],
+                  },
+                },
+              },
+            },
             "401": { description: "Unauthorized - token required" },
             "403": { description: "Forbidden - admin role required" },
             "500": { description: "Internal server error" },
@@ -544,12 +597,37 @@ export default function (
       "/users": {
         get: {
           tags: ["Users"],
-          summary: "Get all registered users (admin only)",
+          summary: "Get registered users with pagination (admin only)",
           security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "page",
+              in: "query",
+              description: "Number of the page to retrieve",
+              required: false,
+              schema: {
+                type: "integer",
+                default: 1,
+              },
+            },
+          ],
           responses: {
-            "200": { description: "List of users retrieved successfully" },
-            "401": { description: "Unauthorized - token required" },
-            "403": { description: "Forbidden - admin role required" },
+            "200": {
+              description: "Paginated list of users",
+              content: {
+                "application/json": {
+                  example: {
+                    success: true,
+                    count: 154,
+                    totalPages: 4,
+                    currentPage: 1,
+                    users: [],
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden" },
           },
         },
       },
@@ -894,10 +972,21 @@ export default function (
           .status(403)
           .json({ success: false, error: "Admin role required" });
       }
+      const page = parseInt(req.query.page as string) || 1;
 
-      const users = await userService.getAllUsers();
-      const usersLength = users.length;
-      res.json({ success: true, count: usersLength, users });
+      const { users, totalCount } = await userService.getAllUsersPaginated(
+        page,
+        paginationLimit,
+      );
+      const totalPages = Math.ceil(totalCount / paginationLimit);
+
+      res.json({
+        success: true,
+        count: totalCount,
+        totalPages: totalPages,
+        currentPage: page,
+        users,
+      });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
@@ -919,10 +1008,22 @@ export default function (
           .status(403)
           .json({ success: false, error: "Admin role required" });
       }
+      const page = parseInt(req.query.page as string) || 1;
 
-      const baseUsers = await userService.getUsersByRole(1);
-      const baseUsersLength = baseUsers.length;
-      res.json({ success: true, count: baseUsersLength, users: baseUsers });
+      const { users, totalCount } = await userService.getUsersByRolePaginated(
+        baseRoleId,
+        page,
+        paginationLimit,
+      );
+      const totalPages = Math.ceil(totalCount / paginationLimit);
+
+      res.json({
+        success: true,
+        count: totalCount,
+        totalPages: totalPages,
+        currentPage: page,
+        users,
+      });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
     }
@@ -945,12 +1046,21 @@ export default function (
           .json({ success: false, error: "Admin role required" });
       }
 
-      const premiumUsers = await userService.getUsersByRole(2);
-      const premiumUsersLength = premiumUsers.length;
+      const page = parseInt(req.query.page as string) || 1;
+
+      const { users, totalCount } = await userService.getUsersByRolePaginated(
+        premiumRoleId,
+        page,
+        paginationLimit,
+      );
+      const totalPages = Math.ceil(totalCount / paginationLimit);
+
       res.json({
         success: true,
-        count: premiumUsersLength,
-        users: premiumUsers
+        count: totalCount,
+        totalPages: totalPages,
+        currentPage: page,
+        users,
       });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });

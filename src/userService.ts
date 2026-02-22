@@ -162,26 +162,69 @@ export class UserService {
     return res.rows[0];
   }
 
-  async getAllUsers() {
-    const query = `
-      SELECT u.id, u.username, u.email, u.created_at, r.name as role_name
-      FROM users u
-      JOIN roles r ON u.role_id = r.id
-      ORDER BY u.created_at DESC;
-    `;
-    const res = await this.pool.query(query);
-    return res.rows;
+  async getAllUsersPaginated(page: number, limit: number) {
+    const offset = (page - 1) * limit;
+
+    const dataQuery = `
+    SELECT u.id, u.username, u.email, u.created_at, r.name as role_name
+    FROM users u
+    JOIN roles r ON u.role_id = r.id
+    ORDER BY u.created_at DESC
+    LIMIT $1 OFFSET $2;
+  `;
+
+    const countQuery = `SELECT COUNT(*) FROM users;`;
+
+    try {
+      const [dataRes, countRes] = await Promise.all([
+        this.pool.query(dataQuery, [limit, offset]),
+        this.pool.query(countQuery),
+      ]);
+
+      return {
+        users: dataRes.rows,
+        totalCount: parseInt(countRes.rows[0].count),
+      };
+    } catch (err) {
+      console.error("Error at getUsersPaginated:", err);
+      throw err;
+    }
   }
 
-  async getUsersByRole(roleId: number): Promise<any[]> {
-    const query = `
+  async getUsersByRolePaginated(
+    roleId: number,
+    page: number,
+    limit: number,
+  ): Promise<{ users: any[]; totalCount: number }> {
+    const offset = (page - 1) * limit;
+
+    const dataQuery = `
     SELECT u.id, u.username, u.email, u.chat_color, u.chat_badge, r.name as role_name 
     FROM users u 
     JOIN roles r ON u.role_id = r.id 
     WHERE u.role_id = $1
+    ORDER BY u.id ASC
+    LIMIT $2 OFFSET $3;
   `;
-    const res = await this.pool.query(query, [roleId]);
-    return res.rows;
+
+    const countQuery = `
+    SELECT COUNT(*) FROM users WHERE role_id = $1;
+  `;
+
+    try {
+      const [dataRes, countRes] = await Promise.all([
+        this.pool.query(dataQuery, [roleId, limit, offset]),
+        this.pool.query(countQuery, [roleId]),
+      ]);
+
+      return {
+        users: dataRes.rows,
+        totalCount: parseInt(countRes.rows[0].count, 10),
+      };
+    } catch (err) {
+      console.error("Error at getUsersByRole:", err);
+      throw err;
+    }
   }
 
   async deleteUser(userId: number) {

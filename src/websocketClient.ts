@@ -394,7 +394,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
 
         const transcriptionEs =
-          await this.translationService.translateTranscription(transcription);
+          await this.translationService.translate(transcription);
 
         const copy = {
           ...(cap ?? {}),
