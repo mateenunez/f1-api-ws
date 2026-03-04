@@ -1093,7 +1093,6 @@ export default function (
             .json({ success: false, error: "Invalid user email" });
         }
         const user = await userService.findByEmail(userEmail);
-        console.log(user);
         res.json({ success: true, user });
       } catch (error) {
         res
@@ -1129,7 +1128,6 @@ export default function (
             .json({ success: false, error: "Invalid user username" });
         }
         const user = await userService.findByUsername(userUsername);
-        console.log(user);
         res.json({ success: true, user });
       } catch (error) {
         res

@@ -22,6 +22,7 @@ export class UserService {
   constructor(private pool: any) {}
 
   async register(username: string, email: string, passwordPlain: string) {
+    email = email.trim().toLowerCase();
     const hash = await bcrypt.hash(passwordPlain, this.SALT_ROUNDS);
 
     const query = `
@@ -66,6 +67,7 @@ export class UserService {
   }
 
   async login(email: string, passwordPlain: string) {
+    email = email.trim().toLowerCase();
     const userData = await this.findByEmail(email);
     if (!userData) throw new Error("USER_NOT_FOUND");
     const isMatch = await bcrypt.compare(passwordPlain, userData.password_hash);
@@ -109,7 +111,7 @@ export class UserService {
       const decoded = jwt.verify(token, this.JWT_SECRET) as any;
 
       const query = `
-      SELECT u.id, u.username, u.chat_color, u.chat_badge, r.name, r.id as role_id, r.cooldown_ms
+      SELECT u.id, u.username, u.chat_color, u.chat_badge, u.email, u.created_at, r.name as role_name, r.id as role_id, r.cooldown_ms
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -145,9 +147,9 @@ export class UserService {
       SELECT u.*, r.name as role_name, r.cooldown_ms 
       FROM users u
       JOIN roles r ON u.role_id = r.id
-      WHERE u.email = $1;
+      WHERE LOWER(u.email) = $1;
     `;
-    const res = await this.pool.query(query, [email]);
+    const res = await this.pool.query(query, [email.toLowerCase()]);
     return res.rows[0];
   }
 
