@@ -74,6 +74,7 @@ class RedisClient {
   }
 
   async setCooldown(userId: number, cooldown: number) {
+    if (cooldown <= 0) return;
     await this.client.set(`cooldown:${userId}`, "1", "EX", cooldown);
   }
 
