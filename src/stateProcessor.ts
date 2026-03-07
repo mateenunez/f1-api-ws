@@ -98,11 +98,7 @@ class StateProcessor implements StateProvider {
   }
 
   updatePartialState(path: string, data: any) {
-    if (path === "R" && data) {
-      this.fullState.R = data;
-    } else {
-      this.deepMerge(this.fullState, { [path]: data });
-    }
+    this.deepMerge(this.fullState.R, { [path]: data });
   }
 
   deepMerge(target: any, source: any) {

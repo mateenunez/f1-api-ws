@@ -91,7 +91,7 @@ class TranslationService implements TranslationProvider {
       );
       return result.text.toUpperCase();
     } catch (error) {
-      console.error("DeepL translation failed.", error);
+      console.error("DeepL translation failed.");
       return undefined;
     }
   }
@@ -113,7 +113,7 @@ class TranslationService implements TranslationProvider {
         const translated = response.text?.trim();
         if (translated) return translated.toUpperCase();
       } catch (error) {
-        console.log("Gemini translation failed.", error);
+        console.error("Gemini translation failed.");
       }
       return await this.translateWithDeepL(message);
     });

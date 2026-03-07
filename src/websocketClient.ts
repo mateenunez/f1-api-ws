@@ -23,7 +23,7 @@ class F1APIWebSocketsClient extends EventEmitter {
     protected readonly stateProcessor: StateProcessor,
     private translationService: TranslationService,
     private transcriptionService: TranscriptionService,
-    private maxInitAttempts: number = 5
+    private maxInitAttempts: number = 5,
   ) {
     super();
     this.setMaxListeners(0);
@@ -35,32 +35,31 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   private isSessionInactive(data: any): boolean {
     if (!data) return false;
-    const statusSeries = data.StatusSeries ?? data?.StatusSeries;
-    if (!statusSeries || typeof statusSeries !== "object") return false;
-    for (const k in statusSeries) {
-      if (statusSeries[k]?.SessionStatus === "Inactive") return true;
-    }
-    return false;
+    const SessionStatus = data.SessionStatus ?? data?.SessionStatus;
+    return SessionStatus === "Inactive";
   }
 
   async receivedInactiveSession(): Promise<void> {
     try {
+      const attributesToClean = ["TyreStintSeries"];
       console.log(
-        "Received Inactive session, forcing full dump (disconnect/reconnect)."
+        "Received Inactive session, clearing attributes:",
+        attributesToClean,
       );
-      await this.disconnect();
-      if (
-        typeof (this.stateProcessor as any).updatePartialState === "function"
-      ) {
-        await (this.stateProcessor as any).updatePartialState("R", {});
-      } else if (
-        typeof (this.stateProcessor as any).updateState === "function"
-      ) {
-        await (this.stateProcessor as any).updateState({ R: {} });
-      }
-      // small delay to ensure sockets fully closed
-      await new Promise((r) => setTimeout(r, 200));
-      await this.init();
+
+      attributesToClean.forEach((attr) => {
+        this.stateProcessor.fullState.R[attr] = {};
+        const streamingData = {
+          M: [
+            {
+              H: "Streaming",
+              M: "feed",
+              A: [attr, this.stateProcessor.fullState.R[attr], new Date().toISOString()],
+            },
+          ],
+        };
+        this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+      });
     } catch (err) {
       console.error("Error handling inactive session:", err);
     }
@@ -106,7 +105,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   async commonWebSocketConnection(
     token: string,
-    cookie: string
+    cookie: string,
   ): Promise<WebSocket> {
     const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
     const encodedToken = encodeURIComponent(token);
@@ -132,7 +131,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         if (parsedData.R) {
           await this.stateProcessor.updateState(parsedData);
           this.broadcast(
-            Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
           );
           console.log("Basic data subscription fullfilled and broadcasted.");
         }
@@ -150,7 +149,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
               this.stateProcessor.processFeed(feedName, data, timestamp);
 
-              if (feedName === "SessionData" && this.isSessionInactive(data)) {
+              if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
                 void this.receivedInactiveSession();
                 return;
               }
@@ -164,7 +163,7 @@ class F1APIWebSocketsClient extends EventEmitter {
                   feedName,
                   data,
                   timestamp,
-                  this.stateProcessor.getPath()
+                  this.stateProcessor.getPath(),
                 );
               }
             }
@@ -183,7 +182,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         console.log(
           "Common websocket closed:",
           code,
-          reason?.toString?.() ?? reason
+          reason?.toString?.() ?? reason,
         );
         this.commonSocket = undefined;
         this.scheduleReconnect();
@@ -211,7 +210,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       const e: AxiosError = error as AxiosError;
       console.log(
         "Error during premium negotiation:",
-        e.response?.data || e.message
+        e.response?.data || e.message,
       );
       return Promise.reject(error);
     }
@@ -219,7 +218,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   async premiumWebsocketConnect(
     subscriptionToken: string,
-    cookies: string[]
+    cookies: string[],
   ): Promise<HubConnection> {
     const cookieString = cookies
       .map((cookie) => cookie.split(";")[0].trim())
@@ -250,7 +249,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       };
       this.broadcast(Buffer.from(JSON.stringify(streamingData)));
 
-      if (feedName === "SessionData" && this.isSessionInactive(data)) {
+      if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
         void this.receivedInactiveSession();
         return;
       }
@@ -264,7 +263,7 @@ class F1APIWebSocketsClient extends EventEmitter {
           feedName,
           data,
           timestamp,
-          this.stateProcessor.getPath()
+          this.stateProcessor.getPath(),
         );
       }
     });
@@ -303,7 +302,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       if (subscriptionData) {
         await this.stateProcessor.updateStatePremium(subscriptionData);
         this.broadcast(
-          Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+          Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
         );
         console.log("Premium data subscription fullfilled and broadcasted.");
       }
@@ -318,7 +317,7 @@ class F1APIWebSocketsClient extends EventEmitter {
   async receivedRaceControlMessage(
     feedName: string,
     data: any,
-    timestamp: string
+    timestamp: string,
   ) {
     try {
       const messagesObj = data?.Messages ?? data;
@@ -332,7 +331,7 @@ class F1APIWebSocketsClient extends EventEmitter {
             key,
             msg: { ...(msgObj ?? {}), Message: translation },
           }))
-          .catch(() => ({ key, msg: { ...(msgObj ?? {}) } }))
+          .catch(() => ({ key, msg: { ...(msgObj ?? {}) } })),
       );
 
       const translated = await Promise.all(translatePromises);
@@ -348,7 +347,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       this.stateProcessor.processFeed(
         feedName + "Es",
         translateData,
-        timestamp
+        timestamp,
       );
 
       const streamingData = {
@@ -370,7 +369,7 @@ class F1APIWebSocketsClient extends EventEmitter {
     feedName: string,
     data: any,
     timestamp: string,
-    sessionPath: string
+    sessionPath: string,
   ) {
     try {
       const capturesObj = data?.Captures ?? data;
@@ -454,10 +453,10 @@ class F1APIWebSocketsClient extends EventEmitter {
         if (parsedData.R) {
           await this.stateProcessor.updateState(parsedData);
           this.broadcast(
-            Buffer.from(JSON.stringify(this.stateProcessor.fullState))
+            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
           );
           console.log(
-            "Local debug: full state received/updated and broadcasted."
+            "Local debug: full state received/updated and broadcasted.",
           );
         }
 
@@ -472,7 +471,7 @@ class F1APIWebSocketsClient extends EventEmitter {
               this.stateProcessor.processFeed(feedName, feedData, timestamp);
 
               if (
-                feedName === "SessionData" &&
+                feedName === "SessionInfo" &&
                 this.isSessionInactive(feedData)
               ) {
                 void this.receivedInactiveSession();
@@ -488,7 +487,7 @@ class F1APIWebSocketsClient extends EventEmitter {
                   feedName,
                   feedData,
                   timestamp,
-                  this.stateProcessor.getPath()
+                  this.stateProcessor.getPath(),
                 );
               }
             }
@@ -511,7 +510,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         console.log(
           "Local websocket closed:",
           code,
-          reason?.toString?.() ?? reason
+          reason?.toString?.() ?? reason,
         );
         this.localSocket = undefined;
         this.scheduleReconnect();
@@ -554,7 +553,7 @@ class F1APIWebSocketsClient extends EventEmitter {
     try {
       const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
       const argvLocalws = process.argv.some((arg) => arg === "--localws");
-      console.log("Local websocket flag is set as", argvLocalws)
+      console.log("Local websocket flag is set as", argvLocalws);
 
       if (process.env.LOCALHOST_WEBSOCKET && argvLocalws) {
         const url = process.env.LOCALHOST_WEBSOCKET;
@@ -592,7 +591,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
           const sock = await this.commonWebSocketConnection(
             negotiationResponse.data["ConnectionToken"],
-            cookieString
+            cookieString,
           );
 
           sock.send(
@@ -623,7 +622,7 @@ class F1APIWebSocketsClient extends EventEmitter {
                 ],
               ],
               I: 1,
-            })
+            }),
           );
         } catch (commonError) {
           console.error("Common connection failed:", commonError);
