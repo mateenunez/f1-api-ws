@@ -41,25 +41,12 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   async receivedInactiveSession(): Promise<void> {
     try {
-      const attributesToClean = ["TyreStintSeries"];
-      console.log(
-        "Received Inactive session, clearing attributes:",
-        attributesToClean,
-      );
+      // const attributesToClean = ["TyreStintSeries"];
+      console.log("Received Inactive Session Info, restarting connection.");
 
-      attributesToClean.forEach((attr) => {
-        this.stateProcessor.fullState.R[attr] = {};
-        const streamingData = {
-          M: [
-            {
-              H: "Streaming",
-              M: "feed",
-              A: [attr, this.stateProcessor.fullState.R[attr], new Date().toISOString()],
-            },
-          ],
-        };
-        this.broadcast(Buffer.from(JSON.stringify(streamingData)));
-      });
+      // Test: reconnecting to get the clean state from F1.
+      this.disconnect();
+      this.init();
     } catch (err) {
       console.error("Error handling inactive session:", err);
     }
@@ -130,10 +117,14 @@ class F1APIWebSocketsClient extends EventEmitter {
         const parsedData = JSON.parse(data.toString());
         if (parsedData.R) {
           await this.stateProcessor.updateState(parsedData);
-          this.broadcast(
-            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-          );
-          console.log("Basic data subscription fullfilled and broadcasted.");
+          try {
+            this.broadcast(
+              Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
+            );
+            console.log("Basic data subscription fullfilled and broadcasted.");
+          } catch (error) {
+            console.error("Error broadcasting basic data:", error);
+          }
         }
 
         // Actualizar el estado de la variable on connection data
@@ -301,10 +292,14 @@ class F1APIWebSocketsClient extends EventEmitter {
 
       if (subscriptionData) {
         await this.stateProcessor.updateStatePremium(subscriptionData);
-        this.broadcast(
-          Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-        );
-        console.log("Premium data subscription fullfilled and broadcasted.");
+        try {
+          this.broadcast(
+            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
+          );
+          console.log("Premium data subscription fullfilled and broadcasted.");
+        } catch (error) {
+          console.error("Error broadcasting premium data:", error);
+        }
       }
 
       return connection;
@@ -452,12 +447,16 @@ class F1APIWebSocketsClient extends EventEmitter {
 
         if (parsedData.R) {
           await this.stateProcessor.updateState(parsedData);
-          this.broadcast(
-            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-          );
-          console.log(
-            "Local debug: full state received/updated and broadcasted.",
-          );
+          try {
+            this.broadcast(
+              Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
+            );
+            console.log(
+              "Local debug: full state received/updated and broadcasted.",
+            );
+          } catch (error) {
+            console.error("Error broadcasting local debug data:", error);
+          }
         }
 
         if (Array.isArray(parsedData.M)) {
@@ -543,6 +542,8 @@ class F1APIWebSocketsClient extends EventEmitter {
     this.commonSocket = undefined;
     this.localSocket = undefined;
     this.resetAttempts();
+    // Clear the state to prevent circular references from accumulating
+    this.stateProcessor.fullState = { R: {} };
   }
 
   async init() {
