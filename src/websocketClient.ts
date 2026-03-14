@@ -41,10 +41,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   async receivedInactiveSession(): Promise<void> {
     try {
-      // const attributesToClean = ["TyreStintSeries"];
       console.log("Received Inactive Session Info, restarting connection.");
-
-      // Test: reconnecting to get the clean state from F1.
       this.disconnect();
       this.init();
     } catch (err) {
@@ -542,8 +539,6 @@ class F1APIWebSocketsClient extends EventEmitter {
     this.commonSocket = undefined;
     this.localSocket = undefined;
     this.resetAttempts();
-    // Clear the state to prevent circular references from accumulating
-    this.stateProcessor.fullState = { R: {} };
   }
 
   async init() {
