@@ -23,7 +23,7 @@ class F1APIWebSocketsClient extends EventEmitter {
     protected readonly stateProcessor: StateProcessor,
     private translationService: TranslationService,
     private transcriptionService: TranscriptionService,
-    private maxInitAttempts: number = 5,
+    private maxInitAttempts: number = 10,
   ) {
     super();
     this.setMaxListeners(0);
