@@ -1,5 +1,6 @@
 import EventEmitter from "events";
 import axios, { AxiosError } from "axios";
+import cbor from "cbor2";
 import WebSocket from "ws";
 import { StateProcessor } from "./stateProcessor";
 import {
@@ -31,6 +32,10 @@ class F1APIWebSocketsClient extends EventEmitter {
 
   broadcast(data: any) {
     this.emit("broadcast", data);
+  }
+
+  private encodeCBOR(data: any): Buffer {
+    return Buffer.from(cbor.encode(data));
   }
 
   private isSessionInactive(data: any): boolean {
@@ -72,110 +77,6 @@ class F1APIWebSocketsClient extends EventEmitter {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
-  }
-
-  async commonNegotiation() {
-    try {
-      const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
-      const url = `https://livetiming.formula1.com/signalr/negotiate?connectionData=${hub}&clientProtocol=1.5`;
-      const res = await axios.get(url);
-      return res;
-    } catch (error) {
-      const e: AxiosError = error as AxiosError;
-      console.log("Error during negotiation:", e.response?.data || e.message);
-      return Promise.reject(error);
-    }
-  }
-
-  async commonWebSocketConnection(
-    token: string,
-    cookie: string,
-  ): Promise<WebSocket> {
-    const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
-    const encodedToken = encodeURIComponent(token);
-    const url = `wss://livetiming.formula1.com/signalr/connect?clientProtocol=1.5&transport=webSockets&connectionToken=${encodedToken}&connectionData=${hub}`;
-    return new Promise((res, rej) => {
-      const sock = new WebSocket(url, {
-        headers: {
-          "User-Agent": "BestHTTP",
-          "Accept-Encoding": "gzip,identity",
-          Cookie: cookie,
-        },
-      });
-
-      this.commonSocket = sock;
-
-      sock.on("open", () => {
-        res(sock);
-        this.resetAttempts();
-      });
-
-      sock.on("message", async (data) => {
-        const parsedData = JSON.parse(data.toString());
-        if (parsedData.R) {
-          await this.stateProcessor.updateState(parsedData);
-          try {
-            this.broadcast(
-              Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-            );
-            console.log("Basic data subscription fullfilled and broadcasted.");
-          } catch (error) {
-            console.error("Error broadcasting basic data:", error);
-          }
-        }
-
-        // Actualizar el estado de la variable on connection data
-        if (Array.isArray(parsedData.M)) {
-          parsedData.M.forEach((update: any) => {
-            if (update.H === "Streaming" && update.M === "feed") {
-              const [feedName, data, timestamp] = update.A;
-
-              const snapshot = this.stateProcessor.getState();
-              if (!snapshot || !snapshot.R) {
-                return;
-              }
-
-              this.stateProcessor.processFeed(feedName, data, timestamp);
-
-              if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
-                void this.receivedInactiveSession();
-                return;
-              }
-
-              if (feedName === "RaceControlMessages") {
-                this.receivedRaceControlMessage(feedName, data, timestamp);
-              }
-
-              if (feedName === "TeamRadio") {
-                this.receivedTeamRadio(
-                  feedName,
-                  data,
-                  timestamp,
-                  this.stateProcessor.getPath(),
-                );
-              }
-            }
-          });
-        }
-
-        this.broadcast(data);
-      });
-
-      sock.on("error", (err) => {
-        console.error("Common websocket error:", err);
-        rej(err);
-      });
-
-      sock.on("close", (code, reason) => {
-        console.log(
-          "Common websocket closed:",
-          code,
-          reason?.toString?.() ?? reason,
-        );
-        this.commonSocket = undefined;
-        this.scheduleReconnect();
-      });
-    });
   }
 
   async premiumNegotiation(subscriptionToken: string) {
@@ -235,7 +136,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       const streamingData = {
         M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
       };
-      this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+      this.broadcast(this.encodeCBOR(streamingData));
 
       if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
         void this.receivedInactiveSession();
@@ -290,9 +191,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       if (subscriptionData) {
         await this.stateProcessor.updateStatePremium(subscriptionData);
         try {
-          this.broadcast(
-            Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-          );
+          this.broadcast(this.encodeCBOR(this.stateProcessor.fullState));
           console.log("Premium data subscription fullfilled and broadcasted.");
         } catch (error) {
           console.error("Error broadcasting premium data:", error);
@@ -351,7 +250,7 @@ class F1APIWebSocketsClient extends EventEmitter {
           },
         ],
       };
-      this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+      this.broadcast(this.encodeCBOR(streamingData));
     } catch (err) {
       console.error("Error in receivedRaceControlMessage:", err);
     }
@@ -410,7 +309,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       const streamingData = {
         M: [{ H: "Streaming", M: "feed", A: [feedName, payload, timestamp] }],
       };
-      this.broadcast(Buffer.from(JSON.stringify(streamingData)));
+      this.broadcast(this.encodeCBOR(streamingData));
     } catch (err) {
       console.error("Error in receivedTeamRadio:", err);
     }
@@ -445,9 +344,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         if (parsedData.R) {
           await this.stateProcessor.updateState(parsedData);
           try {
-            this.broadcast(
-              Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
-            );
+            this.broadcast(this.encodeCBOR(this.stateProcessor.fullState));
             console.log(
               "Local debug: full state received/updated and broadcasted.",
             );
@@ -491,7 +388,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
 
         try {
-          this.broadcast(Buffer.from(JSON.stringify(parsedData)));
+          this.broadcast(this.encodeCBOR(parsedData));
         } catch (e) {
           console.error("Error broadcasting local debug message:", e);
         }
@@ -571,57 +468,6 @@ class F1APIWebSocketsClient extends EventEmitter {
           }
         } catch (premiumError) {
           console.warn("Premium connection failed: ", premiumError);
-        }
-
-        try {
-          console.log("Started common negotiation.");
-
-          const negotiationResponse = await this.commonNegotiation();
-
-          const cookies: string[] =
-            negotiationResponse.headers["set-cookie"] ?? [];
-
-          const cookieString = cookies
-            .map((cookie) => cookie.split(";")[0].trim())
-            .join("; ");
-
-          const sock = await this.commonWebSocketConnection(
-            negotiationResponse.data["ConnectionToken"],
-            cookieString,
-          );
-
-          sock.send(
-            JSON.stringify({
-              H: "Streaming",
-              M: "Subscribe",
-              A: [
-                [
-                  "Heartbeat",
-                  "CarData",
-                  "Position",
-                  "ExtrapolatedClock",
-                  "TopThree",
-                  "TimingStats",
-                  "TimingAppData",
-                  "WeatherData",
-                  "TrackStatus",
-                  "DriverList",
-                  "RaceControlMessages",
-                  "SessionInfo",
-                  "SessionData",
-                  "LapCount",
-                  "TimingData",
-                  "TyreStintSeries",
-                  "TeamRadio",
-                  "CarData.z",
-                  "Position.z",
-                ],
-              ],
-              I: 1,
-            }),
-          );
-        } catch (commonError) {
-          console.error("Common connection failed:", commonError);
         }
       }
     } catch (error) {
