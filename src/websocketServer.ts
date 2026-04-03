@@ -183,6 +183,10 @@ class WebSocketTelemetryServer {
       ALLOWED_ATTR: [],
     }).trim();
   };
+
+  getClientCount(): number {
+    return this.wss.clients.size;
+  }
 }
 
 export { WebSocketTelemetryServer };

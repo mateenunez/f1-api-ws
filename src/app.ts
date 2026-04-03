@@ -76,8 +76,19 @@ async function main() {
 
   const userService = new UserService(databaseService.getPool());
 
+  const telemetryServer = new WebSocketTelemetryServer(
+    server,
+    stateProcessor,
+    eventEmitter,
+    redisClient,
+    userService
+  ); // Handles client connections and listens to the event bus.
 
-  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter, redisClient, userService); // Handles client connections and listens to the event bus.
+  if (eventEmitter instanceof F1APIWebSocketsClient) {
+    (eventEmitter as any).setClientCountProvider(() =>
+      telemetryServer.getClientCount()
+    );
+  }
 
   server.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);
