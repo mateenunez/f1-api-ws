@@ -8,6 +8,7 @@ import { Response, Request } from "express";
 import { DatabaseService } from "./databaseService";
 import { RoleService } from "./roleService";
 import { UserService } from "./userService";
+import { ChatService } from "./chatService";
 import { RedisClient } from "./redisClient";
 import swaggerUi from "swagger-ui-express";
 
@@ -190,11 +191,12 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
 export default function (
   databaseService: DatabaseService,
   redisClient: RedisClient,
+  chatService: ChatService,
+  userService: UserService,
+  roleService: RoleService,
 ) {
   const router = express.Router();
   const pool = databaseService.getPool();
-  const roleService = new RoleService(pool);
-  const userService = new UserService(pool);
   const paginationLimit = 50;
   const premiumRoleId = 2;
   const baseRoleId = 1;
@@ -463,6 +465,71 @@ export default function (
           responses: {
             "200": { description: "Authenticated" },
             "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/chat/pinned": {
+        get: {
+          tags: ["Chat"],
+          summary: "Get pinned chat messages (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Messages retrieved" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Server error" },
+          },
+        },
+      },
+      "/chat/pin": {
+        post: {
+          tags: ["Chat"],
+          summary: "Create a pinned chat message (admin only)",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    content: {
+                      type: "string",
+                      description: "Message content to pin",
+                    },
+                    lang: { type: "string", description: "Language code" },
+                  },
+                  required: ["content", "lang"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Message pinned successfully" },
+            "400": { description: "Bad request - missing content or lang" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "404": { description: "Failed to pin message" },
+          },
+        },
+      },
+      "/chat/unpin": {
+        delete: {
+          tags: ["Chat"],
+          summary: "Unpin all messages (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "lang",
+              in: "query",
+              required: false,
+              schema: { type: "string" },
+            },
+          ],
+          responses: {
+            "200": { description: "Unpinned successfully" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
           },
         },
       },
@@ -944,7 +1011,82 @@ export default function (
     }
   });
 
-  // Admin-only endpoints
+  // Chat pinned messages endpoints
+  router.get("/chat/pinned", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token || !(await verifyAdminRole(token))) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+      const pinned = await chatService.getPinnedMessages();
+      res.json({ success: true, pinned });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/chat/pin", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token || !(await verifyAdminRole(token))) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const content = req.body.content as string;
+      const lang = req.body.lang as string;
+
+      if (!content) {
+        return res
+          .status(400)
+          .json({ success: false, error: "content is required" });
+      }
+
+      if (!lang || (lang !== "en" && lang !== "es")) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid language code" });
+      }
+
+      const pinned = await chatService.pinMessage(lang, content);
+      if (!pinned) {
+        return res
+          .status(404)
+          .json({ success: false, error: "Failed to pin message" });
+      }
+
+      res.json({ success: true, pinned });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.delete("/chat/unpin", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token || !(await verifyAdminRole(token))) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const lang = (req.query.lang as string) || undefined;
+
+      if (!lang || (lang !== "en" && lang !== "es")) {
+        return res
+          .status(400)
+          .json({ success: false, error: "Invalid language code" });
+      }
+
+      await chatService.unpinAll(lang);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
 
   // Helper function to verify admin role
   async function verifyAdminRole(token: string): Promise<boolean> {

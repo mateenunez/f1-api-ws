@@ -313,6 +313,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       if (subscriptionData) {
         await this.stateProcessor.updateStatePremium(subscriptionData);
         try {
+          this.addUserCountIfNeeded(this.stateProcessor.fullState);
           this.broadcast(
             Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
           );
