@@ -214,7 +214,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         await this.stateProcessor.updateStatePremium(subscriptionData);
         try {
           this.addUserCountIfNeeded(this.stateProcessor.fullState);
-          this.broadcast(this.encodeCBOR(streamingData));
+          this.broadcast(this.encodeCBOR(this.stateProcessor.fullState));
           console.log("Premium data subscription fullfilled and broadcasted.");
         } catch (error) {
           console.error("Error broadcasting premium data:", error);
