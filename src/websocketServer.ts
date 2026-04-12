@@ -5,6 +5,7 @@ import EventEmitter from "events";
 import { RedisClient } from "./redisClient";
 import { JSDOM } from "jsdom";
 import createDOMPurify from "dompurify";
+import cbor from "cbor2";
 import { UserService } from "./userService";
 import { ChatService } from "./chatService";
 
@@ -17,6 +18,57 @@ class WebSocketTelemetryServer {
   private wss: WebSocketServer;
   private window = new JSDOM("").window;
   private DOMPurify = createDOMPurify(this.window);
+
+  private encodeCBOR(value: any): Buffer {
+    return Buffer.from(cbor.encode(value));
+  }
+
+  private normalizeOutgoingMessage(data: any): Buffer {
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+      try {
+        cbor.decode(data);
+        return Buffer.from(data);
+      } catch {
+        try {
+          const parsed = JSON.parse(Buffer.from(data).toString());
+          return this.encodeCBOR(parsed);
+        } catch {
+          return this.encodeCBOR(Buffer.from(data).toString());
+        }
+      }
+    }
+
+    if (typeof data === "string") {
+      try {
+        return this.encodeCBOR(JSON.parse(data));
+      } catch {
+        return this.encodeCBOR(data);
+      }
+    }
+
+    return this.encodeCBOR(data);
+  }
+
+  private decodeWebSocketMessage(rawData: any): any {
+    const buffer = Buffer.isBuffer(rawData)
+      ? rawData
+      : rawData instanceof ArrayBuffer
+      ? Buffer.from(rawData)
+      : Array.isArray(rawData)
+      ? Buffer.concat(rawData.map((chunk) => Buffer.from(chunk)))
+      : Buffer.from(rawData.toString());
+
+    try {
+      return cbor.decode(buffer);
+    } catch {
+      const text = buffer.toString();
+      try {
+        return JSON.parse(text);
+      } catch {
+        return text;
+      }
+    }
+  }
 
   constructor(
     server: HttpServer,
@@ -36,8 +88,11 @@ class WebSocketTelemetryServer {
     this.wss.on("connection", async (ws: AuthenticatedSocket) => {
       const eventListener = (data: any) => {
         if (ws.readyState === WebSocket.OPEN) {
-          const message = typeof data === "string" ? data : data.toString();
-          ws.send(message);
+          try {
+            ws.send(this.normalizeOutgoingMessage(data));
+          } catch (err) {
+            console.error("Error sending broadcast message:", err);
+          }
         }
       };
 
@@ -46,7 +101,7 @@ class WebSocketTelemetryServer {
       const snapshot = this.stateProcessor.getState();
 
       if (snapshot != null) {
-        const buffer = Buffer.from(JSON.stringify(snapshot));
+        const buffer = this.encodeCBOR(snapshot);
         eventListener(buffer);
       }
 
@@ -61,33 +116,33 @@ class WebSocketTelemetryServer {
 
       ws.on("message", async (rawData) => {
         try {
-          const data = JSON.parse(rawData.toString());
+          const data = this.decodeWebSocketMessage(rawData);
 
           switch (data.type) {
             case "auth:token":
               try {
                 const token = data.payload.token;
                 if (!token) {
-                  ws.send(JSON.stringify({ error: "No token given." }));
+                  ws.send(this.encodeCBOR({ error: "No token given." }));
                 }
 
                 const user = await this.userService.verifyToken(token);
                 if (!user) {
-                  ws.send(JSON.stringify({ error: "Invalid token" }));
+                  ws.send(this.encodeCBOR({ error: "Invalid token" }));
                   return;
                 }
                 ws.user = user;
                 ws.isAuthenticated = true;
 
                 ws.send(
-                  JSON.stringify({
+                  this.encodeCBOR({
                     success: true,
                     message: "Authenticated",
                   }),
                 );
               } catch (error) {
                 ws.isAuthenticated = false;
-                ws.send(JSON.stringify({ error: "Invalid token" }));
+                ws.send(this.encodeCBOR({ error: "Invalid token" }));
                 console.log("Authentication failed.");
               }
               break;
@@ -96,7 +151,7 @@ class WebSocketTelemetryServer {
               const { content, language } = data.payload || {};
 
               if (!ws.isAuthenticated || !ws.user) {
-                ws.send(JSON.stringify({ error: "Authentication required" }));
+                ws.send(this.encodeCBOR({ error: "Authentication required" }));
                 return;
               }
 
@@ -105,18 +160,18 @@ class WebSocketTelemetryServer {
                 typeof content !== "string" ||
                 content.trim().length === 0
               ) {
-                ws.send(JSON.stringify({ error: "Message is empty" }));
+                ws.send(this.encodeCBOR({ error: "Message is empty" }));
                 return;
               }
 
               if (content.length > 200) {
-                ws.send(JSON.stringify({ error: "Message too long" }));
+                ws.send(this.encodeCBOR({ error: "Message too long" }));
                 return;
               }
 
               const hasCooldown = await redis.hasCooldown(ws.user.id);
               if (hasCooldown) {
-                ws.send(JSON.stringify({ error: "Cooldown active" }));
+                ws.send(this.encodeCBOR({ error: "Cooldown active" }));
                 return;
               }
 
@@ -169,7 +224,7 @@ class WebSocketTelemetryServer {
               // save chat message
               this.stateProcessor.saveChatMessage(chatPayload, eventName);
               // broadcast
-              eventBus.emit("broadcast", JSON.stringify(telemetryMessage));
+              eventBus.emit("broadcast", this.encodeCBOR(telemetryMessage));
               break;
             }
             default:
