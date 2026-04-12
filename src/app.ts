@@ -13,6 +13,8 @@ import { RedisClient } from "./redisClient";
 import { DatabaseService } from "./databaseService";
 import createRouter from "./api";
 import { UserService } from "./userService";
+import { ChatService } from "./chatService";
+import { RoleService } from "./roleService";
 dotenv.config();
 
 async function main() {
@@ -29,14 +31,11 @@ async function main() {
   const transcriptionService = new TranscriptionService(); // Transcription service using AssemblyAI API.
   const redisClient = new RedisClient(); // Redis client for storing and retrieving data.
 
-  // mount API router with injected services
-  app.use("/", createRouter(databaseService, redisClient));
-
   const stateProcessor = new StateProcessor(redisClient); // Processes and maintains the state of the current session.
 
   let eventEmitter: EventEmitter;
   const argvReplay = process.argv.some((arg) => arg === "--replay");
-  console.log("Replay flag is set as", argvReplay)
+  console.log("Replay flag is set as", argvReplay);
 
   if (process.env.REPLAY_FILE && argvReplay) {
     let fastForwardSeconds = 0;
@@ -55,12 +54,12 @@ async function main() {
       }
     }
 
-    console.log("Fast forward is set to", fastForwardSeconds)
+    console.log("Fast forward is set to", fastForwardSeconds);
 
     const replayProvider = new ReplayProvider(
       process.env.REPLAY_FILE,
       stateProcessor,
-      fastForwardSeconds
+      fastForwardSeconds,
     ); // Plays a replay file and updates the stateProcessor.
     eventEmitter = replayProvider;
     replayProvider.run();
@@ -68,16 +67,42 @@ async function main() {
     const websocketClient = new F1APIWebSocketsClient(
       stateProcessor,
       translationService,
-      transcriptionService
+      transcriptionService,
     ); // Connects to the F1 WebSocket and acts as the event bus.
     websocketClient.init(); // async init
     eventEmitter = websocketClient;
   }
 
   const userService = new UserService(databaseService.getPool());
+  const chatService = new ChatService(databaseService.getPool(), eventEmitter);
+  const roleService = new RoleService(databaseService.getPool());
 
+  // mount API router with injected services
+  app.use(
+    "/",
+    createRouter(
+      databaseService,
+      redisClient,
+      chatService,
+      userService,
+      roleService,
+    ),
+  );
 
-  new WebSocketTelemetryServer(server, stateProcessor, eventEmitter, redisClient, userService); // Handles client connections and listens to the event bus.
+  const telemetryServer = new WebSocketTelemetryServer(
+    server,
+    stateProcessor,
+    eventEmitter,
+    redisClient,
+    userService,
+    chatService,
+  ); // Handles client connections and listens to the event bus.
+
+  if (eventEmitter instanceof F1APIWebSocketsClient) {
+    (eventEmitter as any).setClientCountProvider(() =>
+      telemetryServer.getClientCount(),
+    );
+  }
 
   server.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);

@@ -52,6 +52,16 @@ export class DatabaseService {
         ADD COLUMN IF NOT EXISTS chat_badge VARCHAR(20) DEFAULT '';
       `);
 
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS chat_pinned_messages (
+          id SERIAL PRIMARY KEY,
+          content TEXT NOT NULL,
+          language VARCHAR(2) NOT NULL,
+          timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
+          pinned BOOLEAN NOT NULL DEFAULT FALSE
+        );
+      `);
+
       // Create admin user if it doesn't exist
       await this.createAdminUserIfNotExists(client);
 

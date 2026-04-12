@@ -7,6 +7,7 @@ import { JSDOM } from "jsdom";
 import createDOMPurify from "dompurify";
 import cbor from "cbor2";
 import { UserService } from "./userService";
+import { ChatService } from "./chatService";
 
 interface AuthenticatedSocket extends WebSocket {
   user?: any;
@@ -75,6 +76,7 @@ class WebSocketTelemetryServer {
     eventBus: EventEmitter,
     redis: RedisClient,
     private userService: UserService,
+    private chatService: ChatService,
   ) {
     if (!server) {
       throw new Error(
@@ -83,7 +85,7 @@ class WebSocketTelemetryServer {
     }
 
     this.wss = new WebSocketServer({ server, clientTracking: true });
-    this.wss.on("connection", (ws: AuthenticatedSocket) => {
+    this.wss.on("connection", async (ws: AuthenticatedSocket) => {
       const eventListener = (data: any) => {
         if (ws.readyState === WebSocket.OPEN) {
           try {
@@ -101,6 +103,13 @@ class WebSocketTelemetryServer {
       if (snapshot != null) {
         const buffer = this.encodeCBOR(snapshot);
         eventListener(buffer);
+      }
+
+      const pinnedMessages = await this.chatService.getPinnedMessages();
+      if (pinnedMessages != null) {
+        const payload = { PinnedMessages: pinnedMessages };
+        const pinnedBuffer = Buffer.from(JSON.stringify(payload));
+        eventListener(pinnedBuffer);
       }
 
       eventBus.on("broadcast", eventListener);
@@ -238,6 +247,10 @@ class WebSocketTelemetryServer {
       ALLOWED_ATTR: [],
     }).trim();
   };
+
+  getClientCount(): number {
+    return this.wss.clients.size;
+  }
 }
 
 export { WebSocketTelemetryServer };
