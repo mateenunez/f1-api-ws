@@ -481,6 +481,19 @@ export default function (
           },
         },
       },
+      "/chat/unpinned": {
+        get: {
+          tags: ["Chat"],
+          summary: "Get unpinned chat messages (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Messages retrieved" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Server error" },
+          },
+        },
+      },
       "/chat/pin": {
         post: {
           tags: ["Chat"],
@@ -1027,6 +1040,21 @@ export default function (
     }
   });
 
+  router.get("/chat/unpinned", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token || !(await verifyAdminRole(token))) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+      const pinned = await chatService.getUnpinnedMessages();
+      res.json({ success: true, pinned });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
   router.post("/chat/pin", async (req: Request, res: Response) => {
     try {
       const token = req.headers.authorization?.split(" ")[1];
@@ -1046,9 +1074,14 @@ export default function (
       }
 
       if (!lang || (lang !== "en" && lang !== "es")) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid language code" });
+        const pinnedEn = await chatService.pinMessage("en", content);
+        const pinnedEs = await chatService.pinMessage("es", content);
+        if (!pinnedEn || !pinnedEs) {
+          return res
+            .status(404)
+            .json({ success: false, error: "Failed to pin messages" });
+        }
+        return res.json({ success: true, pinnedEn, pinnedEs });
       }
 
       const pinned = await chatService.pinMessage(lang, content);
@@ -1076,9 +1109,9 @@ export default function (
       const lang = (req.query.lang as string) || undefined;
 
       if (!lang || (lang !== "en" && lang !== "es")) {
-        return res
-          .status(400)
-          .json({ success: false, error: "Invalid language code" });
+        await chatService.unpinAll("en");
+        await chatService.unpinAll("es");
+        return res.json({ success: true });
       }
 
       await chatService.unpinAll(lang);

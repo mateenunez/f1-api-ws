@@ -31,6 +31,16 @@ export class ChatService {
     return res.rows;
   }
 
+    async getUnpinnedMessages(): Promise<PinnedChatMessage[]> {
+    const res = await this.pool.query(
+      `SELECT id, content, language, timestamp, pinned
+       FROM chat_pinned_messages
+       WHERE pinned = false
+       ORDER BY timestamp DESC`,
+    );
+    return res.rows;
+  }
+
   async pinMessage(
     language: string,
     content: string,
