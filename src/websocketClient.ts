@@ -23,10 +23,30 @@ class F1APIWebSocketsClient extends EventEmitter {
     protected readonly stateProcessor: StateProcessor,
     private translationService: TranslationService,
     private transcriptionService: TranscriptionService,
+    private clientCountProvider?: () => number,
     private maxInitAttempts: number = 10,
   ) {
     super();
     this.setMaxListeners(0);
+  }
+
+  setClientCountProvider(provider: () => number): void {
+    this.clientCountProvider = provider;
+  }
+
+  private shouldIncludeUserCount(): boolean {
+    const sessionStatus =
+      this.stateProcessor?.fullState?.R?.SessionInfo?.SessionStatus;
+    return sessionStatus !== "Finalised";
+  }
+
+  private addUserCountIfNeeded(data: any): any {
+    if (!this.shouldIncludeUserCount() || !this.clientCountProvider) {
+      return data;
+    }
+    const WebsocketUsers: number = this.clientCountProvider();
+    data.wsu = WebsocketUsers;
+    return data;
   }
 
   broadcast(data: any) {
@@ -235,6 +255,9 @@ class F1APIWebSocketsClient extends EventEmitter {
       const streamingData = {
         M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
       };
+
+      this.addUserCountIfNeeded(streamingData);
+
       this.broadcast(Buffer.from(JSON.stringify(streamingData)));
 
       if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
@@ -290,6 +313,7 @@ class F1APIWebSocketsClient extends EventEmitter {
       if (subscriptionData) {
         await this.stateProcessor.updateStatePremium(subscriptionData);
         try {
+          this.addUserCountIfNeeded(this.stateProcessor.fullState);
           this.broadcast(
             Buffer.from(JSON.stringify(this.stateProcessor.fullState)),
           );
@@ -491,6 +515,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         }
 
         try {
+          this.addUserCountIfNeeded(parsedData);
           this.broadcast(Buffer.from(JSON.stringify(parsedData)));
         } catch (e) {
           console.error("Error broadcasting local debug message:", e);
