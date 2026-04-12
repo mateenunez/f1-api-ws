@@ -108,7 +108,7 @@ class WebSocketTelemetryServer {
       const pinnedMessages = await this.chatService.getPinnedMessages();
       if (pinnedMessages != null) {
         const payload = { PinnedMessages: pinnedMessages };
-        const pinnedBuffer = Buffer.from(JSON.stringify(payload));
+        const pinnedBuffer = this.encodeCBOR(payload);
         eventListener(pinnedBuffer);
       }
 
