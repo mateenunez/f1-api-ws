@@ -144,7 +144,7 @@ export class UserService {
 
   async findByEmail(email: string) {
     const query = `
-      SELECT u.id, u.username, u.email, u.role_id, u.created_at, u.chat_color, u.chat_badge, r.name as role_name, r.cooldown_ms 
+      SELECT u.*, r.name as role_name, r.cooldown_ms 
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE LOWER(u.email) = $1;
@@ -155,7 +155,7 @@ export class UserService {
 
   async findByUsername(username: string) {
     const query = `
-      SELECT u.id, u.username, u.email, u.role_id, u.created_at, u.chat_color, u.chat_badge, r.name as role_name, r.cooldown_ms 
+      SELECT u.*, r.name as role_name, r.cooldown_ms 
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.username = $1;
