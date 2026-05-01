@@ -306,7 +306,7 @@ export default function (
       title: "F1 Telemetry API",
       version: "1.0.5",
       description:
-        "APIs for calendar, DB ping, roles and user auth (register/login).",
+        "This is a websocket connection for the F1 Telemetry, captures F1 signal and sends the data with no modifications to the client. PERSONAL USE ONLY: This backend service is developed and maintained for personal, non-commercial use only. It is not intended for commercial, business, or lucrative purposes. NO COMMERCIAL INTENT: The owner of this service has no intentions to generate revenue, profit, or commercial gain from this backend. This is a personal project for educational and personal entertainment purposes. NO WARRANTIES: This service is provided \"AS IS\" without any warranties, express or implied. The owner makes no representations about the reliability, accuracy, or completeness of the information provided. LIMITATION OF LIABILITY: The owner of this backend service shall not be held responsible, liable, or accountable for any damages, losses, or consequences arising from the use, misuse, or inability to use this service. Users access and use this service at their own risk. USER RESPONSIBILITY: Users are solely responsible for their use of this service and must comply with all applicable laws and regulations. The owner assumes no responsibility for user actions or the consequences thereof. NO ENDORSEMENT: This service is not affiliated with, endorsed by, or sponsored by Formula 1, FIA, or any official racing organizations. All data and information are obtained from publicly available sources. ACCEPTANCE: By accessing or using this service, you acknowledge that you have read, understood, and agree to these terms. If you do not agree, please do not use this service.",
     },
     components: {
       securitySchemes: {
@@ -845,51 +845,7 @@ export default function (
     },
   };
 
-  router.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
-
-  router.get("/", async (req: Request, res: Response) => {
-    res.send(`
-      <!DOCTYPE html>
-      <html lang="es">
-        <head>
-          <meta charset="UTF-8" />
-          <title>F1 WebSocket Proxy</title>
-          <style>
-            :root { --bg: #1c2022; --card: #ffffff; --muted: #c7d0da; --accent: #4ab855; }
-            body { height: 100%; font-family: Arial, sans-serif; background: linear-gradient(180deg,var(--bg),#0b1220); color: var(--muted); margin: 0; padding: 40px; }
-            .container { max-width: 900px; height: 100%; margin: auto; background: #1c2022; border-radius: 8px; padding: 28px; box-shadow: 0 6px 24px rgba(2,6,23,0.6);}
-            h1 { color: var(--card); margin: 0 0 10px 0; font-size: 28px; }
-            .status { font-size: 0.95em; margin-top: 12px; color: #7ef0a6; }
-            .description { font-size: 0.95em; margin-top: 20px; line-height:1.5; }
-            a.docs { display:inline-block; margin-top:20px; padding:10px 14px; background: var(--accent); color:#fff; text-decoration:none; border-radius:6px;}
-            .legal { margin-top:18px; background: #1c2022; padding:12px; border-radius:6px; color:var(--muted); font-size:0.86em;}
-            .legal h3 { color: #a9d0ff; margin:0 0 6px 0; }
-          </style>
-        </head>
-        <body>
-          <div class="container">
-            <h1>F1 Websocket Proxy</h1>
-            <div class="status">WebSocket active</div>
-            <div class="description">
-              <div>This is a websocket connection for the F1 Telemetry, captures F1 signal and sends the data with no modifications to the client.</div>
-              <div>This websocket doesn't need authorization; if you found this websocket and want to get the information please consider notifying the owner to preserve free hosting.</div>
-              <a class="docs" href="/swagger">Open API Docs (Swagger UI)</a>
-              <div class="legal">
-                <h3>LEGAL DISCLAIMER & TERMS OF USE</h3>
-                <p><strong>PERSONAL USE ONLY:</strong> This backend service is developed and maintained for personal, non-commercial use only. It is not intended for commercial, business, or lucrative purposes.</p>
-                <p><strong>NO COMMERCIAL INTENT:</strong> The owner of this service has no intentions to generate revenue, profit, or commercial gain from this backend. This is a personal project for educational and personal entertainment purposes.</p>
-                <p><strong>NO WARRANTIES:</strong> This service is provided "AS IS" without any warranties, express or implied. The owner makes no representations about the reliability, accuracy, or completeness of the information provided.</p>
-                <p><strong>LIMITATION OF LIABILITY:</strong> The owner of this backend service shall not be held responsible, liable, or accountable for any damages, losses, or consequences arising from the use, misuse, or inability to use this service. Users access and use this service at their own risk.</p>
-                <p><strong>USER RESPONSIBILITY:</strong> Users are solely responsible for their use of this service and must comply with all applicable laws and regulations. The owner assumes no responsibility for user actions or the consequences thereof.</p>
-                <p><strong>NO ENDORSEMENT:</strong> This service is not affiliated with, endorsed by, or sponsored by Formula 1, FIA, or any official racing organizations. All data and information are obtained from publicly available sources.</p>
-                <p><strong>ACCEPTANCE:</strong> By accessing or using this service, you acknowledge that you have read, understood, and agree to these terms. If you do not agree, please do not use this service.</p>
-              </div>
-            </div>
-          </div>
-        </body>
-      </html>
-    `);
-  });
+  router.use("/", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
   router.get("/calendar", calendarHandle);
 
