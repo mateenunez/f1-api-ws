@@ -2,7 +2,6 @@ import EventEmitter from "events";
 import axios, { AxiosError } from "axios";
 import cbor from "cbor2";
 import WebSocket from "ws";
-import { SocksProxyAgent } from "socks-proxy-agent";
 import { StateProcessor } from "./stateProcessor";
 import {
   HttpTransportType,
@@ -20,7 +19,6 @@ class F1APIWebSocketsClient extends EventEmitter {
   private premiumConnection?: HubConnection;
   private commonSocket?: WebSocket;
   private localSocket?: WebSocket;
-  private proxyAgent: SocksProxyAgent;
 
   constructor(
     protected readonly stateProcessor: StateProcessor,
@@ -31,7 +29,6 @@ class F1APIWebSocketsClient extends EventEmitter {
   ) {
     super();
     this.setMaxListeners(0);
-    this.proxyAgent = new SocksProxyAgent('socks5h://127.0.0.1:4000');
   }
 
   setClientCountProvider(provider: () => number): void {
@@ -116,7 +113,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         Referer: "https://account.formula1.com/",
         "Content-Type": "application/json",
       };
-      const response = await axios.post(url, null, { headers, httpsAgent: this.proxyAgent });
+      const response = await axios.post(url, null, { headers});
       return response;
     } catch (error) {
       const e: AxiosError = error as AxiosError;
@@ -347,8 +344,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         headers: {
           "User-Agent": "BestHTTP",
           "Accept-Encoding": "gzip,identity",
-        },
-        agent: this.proxyAgent,
+        }
       });
 
       this.localSocket = sock;
