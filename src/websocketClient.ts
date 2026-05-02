@@ -114,8 +114,9 @@ class F1APIWebSocketsClient extends EventEmitter {
         Referer: "https://account.formula1.com/",
         "Content-Type": "application/json",
       };
-      const httpsProxy = process.env.HTTPS_PROXY || "http://host.docker.internal:4000";
-      const response = await axios.post(url, null, { headers, httpsAgent: new HttpsProxyAgent(httpsProxy) });
+      const proxyUrl = 'http://warp:8118';
+      const proxyAgent = new HttpsProxyAgent(proxyUrl);
+      const response = await axios.post(url, null, { headers, httpsAgent: proxyAgent, proxy: false });
       return response;
     } catch (error) {
       const e: AxiosError = error as AxiosError;
