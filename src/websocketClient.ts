@@ -2,6 +2,7 @@ import EventEmitter from "events";
 import axios, { AxiosError } from "axios";
 import cbor from "cbor2";
 import WebSocket from "ws";
+import { HttpsProxyAgent } from "https-proxy-agent";
 import { StateProcessor } from "./stateProcessor";
 import {
   HttpTransportType,
@@ -113,7 +114,8 @@ class F1APIWebSocketsClient extends EventEmitter {
         Referer: "https://account.formula1.com/",
         "Content-Type": "application/json",
       };
-      const response = await axios.post(url, null, { headers});
+      const httpsProxy = process.env.HTTPS_PROXY || "http://host.docker.internal:4000";
+      const response = await axios.post(url, null, { headers, httpsAgent: new HttpsProxyAgent(httpsProxy) });
       return response;
     } catch (error) {
       const e: AxiosError = error as AxiosError;
