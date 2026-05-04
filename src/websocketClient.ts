@@ -1,15 +1,7 @@
 import EventEmitter from "events";
-import axios, { AxiosError } from "axios";
 import cbor from "cbor2";
-import WebSocket from "ws";
-import { HttpsProxyAgent } from "https-proxy-agent";
+import net from "net";
 import { StateProcessor } from "./stateProcessor";
-import {
-  HttpTransportType,
-  HubConnection,
-  HubConnectionBuilder,
-  LogLevel,
-} from "@microsoft/signalr";
 import { TranslationService } from "./translationService";
 import { TranscriptionService } from "./transcriptionService";
 
@@ -17,9 +9,10 @@ class F1APIWebSocketsClient extends EventEmitter {
   private initAttempts = 0;
   private isInitializing = false;
   private reconnectTimeout: NodeJS.Timeout | null = null;
-  private premiumConnection?: HubConnection;
-  private commonSocket?: WebSocket;
-  private localSocket?: WebSocket;
+  private tcpServer?: net.Server;
+  private tcpClient?: net.Socket;
+  private bridgePort: number;
+  private bridgeHost: string;
 
   constructor(
     protected readonly stateProcessor: StateProcessor,
@@ -30,6 +23,8 @@ class F1APIWebSocketsClient extends EventEmitter {
   ) {
     super();
     this.setMaxListeners(0);
+    this.bridgePort = parseInt(process.env.DROPLET_PORT || "9000");
+    this.bridgeHost = "127.0.0.1"; // Listen on localhost via SSH tunnel
   }
 
   setClientCountProvider(provider: () => number): void {
@@ -100,134 +95,129 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
   }
 
-  async premiumNegotiation(subscriptionToken: string) {
-    try {
-      const hub = encodeURIComponent(JSON.stringify([{ name: "Streaming" }]));
-      const url = `https://livetiming.formula1.com/signalrcore/negotiate?connectionData=${hub}&clientProtocol=1.5`;
-      const headers = {
-        Authorization: `Bearer ${subscriptionToken}`,
-        "User-Agent":
-          "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
-        Accept: "application/json, text/plain, */*",
-        "Accept-Encoding": "gzip, deflate, br",
-        Origin: "https://account.formula1.com",
-        Referer: "https://account.formula1.com/",
-        "Content-Type": "application/json",
-      };
-      const proxyUrl = 'http://warp:8118';
-      const proxyAgent = new HttpsProxyAgent(proxyUrl);
-      const response = await axios.post(url, null, { headers, httpsAgent: proxyAgent, proxy: false });
-      return response;
-    } catch (error) {
-      const e: AxiosError = error as AxiosError;
+  /**
+   * Start TCP server to receive data from the bridge
+   */
+  private startTcpServer(): Promise<void> {
+    return new Promise((resolve, reject) => {
       console.log(
-        "Error during premium negotiation:",
-        e.response?.data || e.message,
+        `[TCP Server] Starting server on ${this.bridgeHost}:${this.bridgePort}...`
       );
-      return Promise.reject(error);
-    }
+
+      this.tcpServer = net.createServer((socket) => {
+        console.log("[TCP Server] Client connected");
+        this.tcpClient = socket;
+        this.resetAttempts();
+
+        socket.on("data", async (chunk) => {
+          try {
+            const data = chunk.toString();
+
+            // Split by newline in case multiple messages are received
+            const messages = data.split("\n").filter((msg) => msg.trim());
+
+            for (const message of messages) {
+              if (!message) continue;
+
+              let parsedData: any;
+              try {
+                parsedData = JSON.parse(message);
+              } catch (err) {
+                console.error("[TCP Server] Error parsing JSON message:", err);
+                continue;
+              }
+
+              // Process the data as if it came from F1
+              await this.processBridgeData(parsedData);
+            }
+          } catch (err) {
+            console.error("[TCP Server] Error processing data:", err);
+          }
+        });
+
+        socket.on("error", (err) => {
+          console.error("[TCP Server] Socket error:", err.message);
+          this.tcpClient = undefined;
+        });
+
+        socket.on("close", () => {
+          console.log("[TCP Server] Client disconnected. Reconnecting in 5s...");
+          this.tcpClient = undefined;
+          setTimeout(() => this.init(), 5000);
+        });
+      });
+
+      this.tcpServer.listen(this.bridgePort, this.bridgeHost, () => {
+        console.log(
+          `[TCP Server] Server listening on ${this.bridgeHost}:${this.bridgePort}`
+        );
+        resolve();
+      });
+
+      this.tcpServer.on("error", (err) => {
+        console.error("[TCP Server] Server error:", err.message);
+        reject(err);
+      });
+    });
   }
 
-  async premiumWebsocketConnect(
-    subscriptionToken: string,
-    cookies: string[],
-  ): Promise<HubConnection> {
-    const cookieString = cookies
-      .map((cookie) => cookie.split(";")[0].trim())
-      .join("; ");
-    const connection = new HubConnectionBuilder()
-      .withUrl("https://livetiming.formula1.com/signalrcore", {
-        transport: HttpTransportType.WebSockets,
-        accessTokenFactory: () => subscriptionToken,
-        headers: {
-          Cookie: cookieString,
-          "User-Agent": "BestHTTP",
-          "Accept-Encoding": "gzip,identity",
-        },
-      })
-      .configureLogging(LogLevel.Information)
-      .build();
-
-    this.premiumConnection = connection;
-
-    connection.on("open", () => {
-      this.resetAttempts();
-    });
-
-    connection.on("feed", (feedName, data, timestamp) => {
-      this.stateProcessor.processFeed(feedName, data, timestamp);
-      const streamingData = {
-        M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
-      };
-
-      this.addUserCountIfNeeded(streamingData);
-      this.broadcast(this.encodeCBOR(streamingData));
-
-      if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
-        void this.receivedInactiveSession();
-        return;
-      }
-
-      if (feedName === "RaceControlMessages") {
-        this.receivedRaceControlMessage(feedName, data, timestamp);
-      }
-
-      if (feedName === "TeamRadio") {
-        this.receivedTeamRadio(
-          feedName,
-          data,
-          timestamp,
-          this.stateProcessor.getPath(),
-        );
-      }
-    });
-
-    connection.onclose((error) => {
-      console.log("Error at premium websocket: ", error);
-      this.premiumConnection = undefined;
-      this.scheduleReconnect();
-    });
-
+  /**
+   * Process data received from the bridge
+   */
+  private async processBridgeData(data: any): Promise<void> {
     try {
-      await connection.start();
-
-      const subscriptionData = await connection.invoke("Subscribe", [
-        "Heartbeat",
-        "CarData",
-        "Position",
-        "ExtrapolatedClock",
-        "TopThree",
-        "TimingStats",
-        "TimingAppData",
-        "WeatherData",
-        "TrackStatus",
-        "DriverList",
-        "RaceControlMessages",
-        "SessionInfo",
-        "SessionData",
-        "LapCount",
-        "TimingData",
-        "TyreStintSeries",
-        "TeamRadio",
-        "CarData.z",
-        "Position.z",
-      ]);
-
-      if (subscriptionData) {
-        await this.stateProcessor.updateStatePremium(subscriptionData);
+      // If it contains the full state (R), update it
+      if (data.R) {
+        await this.stateProcessor.updateStatePremium(data);
         try {
           this.addUserCountIfNeeded(this.stateProcessor.fullState);
           this.broadcast(this.encodeCBOR(this.stateProcessor.fullState));
-          console.log("Premium data subscription fullfilled and broadcasted.");
+          console.log("[TCP Server] Full state received and broadcasted.");
         } catch (error) {
-          console.error("Error broadcasting premium data:", error);
+          console.error("[TCP Server] Error broadcasting full state:", error);
         }
       }
 
-      return connection;
-    } catch (error) {
-      console.error("Connection failed: ", error);
-      return Promise.reject(error);
+      // If it's a streaming update (M array)
+      if (Array.isArray(data.M)) {
+        data.M.forEach((update: any) => {
+          if (update.H === "Streaming" && update.M === "feed") {
+            const [feedName, feedData, timestamp] = update.A;
+
+            this.stateProcessor.processFeed(feedName, feedData, timestamp);
+
+            if (
+              feedName === "SessionInfo" &&
+              this.isSessionInactive(feedData)
+            ) {
+              void this.receivedInactiveSession();
+              return;
+            }
+
+            if (feedName === "RaceControlMessages") {
+              this.receivedRaceControlMessage(feedName, feedData, timestamp);
+            }
+
+            if (feedName === "TeamRadio") {
+              this.receivedTeamRadio(
+                feedName,
+                feedData,
+                timestamp,
+                this.stateProcessor.getPath()
+              );
+            }
+          }
+        });
+      }
+
+      try {
+        this.addUserCountIfNeeded(data);
+        this.broadcast(this.encodeCBOR(data));
+      } catch (e) {
+        console.error("[TCP Server] Error broadcasting data:", e);
+      }
+    } catch (err) {
+      console.error("[TCP Server] Error processing bridge data:", err);
     }
   }
 
@@ -341,103 +331,6 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
   }
 
-  async localDebugWebsocketConnect(url: string): Promise<WebSocket> {
-    return new Promise((res, rej) => {
-      const sock = new WebSocket(url, {
-        headers: {
-          "User-Agent": "BestHTTP",
-          "Accept-Encoding": "gzip,identity",
-        }
-      });
-
-      this.localSocket = sock;
-
-      sock.on("open", () => {
-        console.log("Connected to local debug websocket:", url);
-        this.resetAttempts();
-        res(sock);
-      });
-
-      sock.on("message", async (data) => {
-        let parsedData: any;
-        try {
-          parsedData = JSON.parse(data.toString());
-        } catch (err) {
-          console.error("Error parsing message from local ws:", err);
-          return;
-        }
-
-        if (parsedData.R) {
-          await this.stateProcessor.updateState(parsedData);
-          try {
-            this.broadcast(this.encodeCBOR(this.stateProcessor.fullState));
-            console.log(
-              "Local debug: full state received/updated and broadcasted.",
-            );
-          } catch (error) {
-            console.error("Error broadcasting local debug data:", error);
-          }
-        }
-
-        if (Array.isArray(parsedData.M)) {
-          parsedData.M.forEach((update: any) => {
-            if (update.H === "Streaming" && update.M === "feed") {
-              const [feedName, feedData, timestamp] = update.A;
-
-              const snapshot = this.stateProcessor.getState();
-              if (!snapshot || !snapshot.R) return;
-
-              this.stateProcessor.processFeed(feedName, feedData, timestamp);
-
-              if (
-                feedName === "SessionInfo" &&
-                this.isSessionInactive(feedData)
-              ) {
-                void this.receivedInactiveSession();
-                return;
-              }
-
-              if (feedName === "RaceControlMessages") {
-                this.receivedRaceControlMessage(feedName, feedData, timestamp);
-              }
-
-              if (feedName === "TeamRadio") {
-                this.receivedTeamRadio(
-                  feedName,
-                  feedData,
-                  timestamp,
-                  this.stateProcessor.getPath(),
-                );
-              }
-            }
-          });
-        }
-
-        try {
-          this.addUserCountIfNeeded(parsedData);
-          this.broadcast(this.encodeCBOR(parsedData));
-        } catch (e) {
-          console.error("Error broadcasting local debug message:", e);
-        }
-      });
-
-      sock.on("error", (err) => {
-        console.error("Local websocket error:", err);
-        rej(err);
-      });
-
-      sock.on("close", (code, reason) => {
-        console.log(
-          "Local websocket closed:",
-          code,
-          reason?.toString?.() ?? reason,
-        );
-        this.localSocket = undefined;
-        this.scheduleReconnect();
-      });
-    });
-  }
-
   async disconnect(): Promise<void> {
     if (this.reconnectTimeout) {
       clearTimeout(this.reconnectTimeout);
@@ -445,23 +338,17 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
     this.isInitializing = false;
     try {
-      if (this.premiumConnection) {
-        await this.premiumConnection.stop();
+      if (this.tcpClient) {
+        this.tcpClient.destroy();
       }
     } catch {}
     try {
-      if (this.commonSocket) {
-        this.commonSocket.close();
+      if (this.tcpServer) {
+        this.tcpServer.close();
       }
     } catch {}
-    try {
-      if (this.localSocket) {
-        this.localSocket.close();
-      }
-    } catch {}
-    this.premiumConnection = undefined;
-    this.commonSocket = undefined;
-    this.localSocket = undefined;
+    this.tcpServer = undefined;
+    this.tcpClient = undefined;
     this.resetAttempts();
   }
 
@@ -471,37 +358,15 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
     this.isInitializing = true;
     try {
-      const subscriptionToken = process.env.F1TVSUBSCRIPTION_TOKEN || "";
-      const argvLocalws = process.argv.some((arg) => arg === "--localws");
-      console.log("Local websocket flag is set as", argvLocalws);
-
-      if (process.env.LOCALHOST_WEBSOCKET && argvLocalws) {
-        const url = process.env.LOCALHOST_WEBSOCKET;
-        try {
-          await this.localDebugWebsocketConnect(url);
-        } catch (localError) {
-          console.warn("Local debug connection failed: ", localError);
-        }
-      } else {
-        try {
-          const negotiation = await this.premiumNegotiation(subscriptionToken);
-
-          const cookies = negotiation.headers["set-cookie"] ?? [];
-
-          if (negotiation && negotiation.status === 200) {
-            if (negotiation.headers)
-              await this.premiumWebsocketConnect(subscriptionToken, cookies);
-            return;
-          }
-        } catch (premiumError) {
-          console.warn("Premium connection failed: ", premiumError);
-        }
-      }
+      // Start TCP server to listen for data from the bridge
+      await this.startTcpServer();
+      console.log("[WebSocket Client] TCP server initialized successfully.");
     } catch (error) {
-      console.log("Error in init:", error);
-    } finally {
+      console.error("[WebSocket Client] Failed to start TCP server:", error);
       this.isInitializing = false;
+      this.scheduleReconnect();
     }
+    this.isInitializing = false;
   }
 }
 
