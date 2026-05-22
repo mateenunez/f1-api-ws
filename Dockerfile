@@ -4,7 +4,7 @@ RUN corepack enable && corepack prepare pnpm@latest --activate
 WORKDIR /app/f1-api-ws
 
 COPY package.json pnpm-lock.yaml .env* ./
-RUN pnpm install --frozen-lockfile
+RUN pnpm install --frozen-lockfile --allow-scripts
 
 COPY . ./
 RUN pnpm run build
@@ -20,7 +20,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 WORKDIR /app/f1-api-ws
 
 COPY package.json pnpm-lock.yaml ./
-RUN pnpm install --prod --frozen-lockfile
+RUN pnpm install --prod --frozen-lockfile --allow-scripts
 
 COPY --from=builder /app/f1-api-ws/dist ./dist
 COPY .env* ./
