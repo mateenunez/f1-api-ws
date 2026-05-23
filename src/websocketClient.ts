@@ -1,7 +1,6 @@
 import EventEmitter from "events";
 import axios, { AxiosError } from "axios";
 import cbor from "cbor2";
-import WebSocket from "ws";
 import { StateProcessor } from "./stateProcessor";
 import {
   HttpTransportType,
@@ -29,11 +28,8 @@ class F1APIWebSocketsClient extends EventEmitter {
   ) {
     super();
     this.setMaxListeners(0);
-    // Get proxy from environment
     this.httpsProxy = process.env.HTTPS_PROXY || "";
-    if (this.httpsProxy) {
-      console.log("[F1Client] Proxy configured:", this.httpsProxy);
-    }
+
   }
 
   setClientCountProvider(provider: () => number): void {
@@ -119,7 +115,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         "Content-Type": "application/json",
       };
 
-      console.log("[F1Client] Negotiating with F1TV API...");
+      console.log("Negotiating with F1TV API...");
       
       const axiosConfig: any = { headers };
       
@@ -127,7 +123,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         const agent = new HttpsProxyAgent(this.httpsProxy);
         axiosConfig.httpAgent = agent;
         axiosConfig.httpsAgent = agent;
-        console.log("[F1Client] Using proxy for negotiation");
+        console.log("Using proxy for negotiation");
       }
 
       const response = await axios.post(url, null, axiosConfig);
