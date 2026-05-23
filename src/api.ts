@@ -106,8 +106,18 @@ function getTrack(summary: string): string {
 async function getEvents() {
   const calendarUrl = process.env.CALENDAR_URL;
 
-  const response = await axios.get(calendarUrl ?? "");
+  const response = await axios.get(calendarUrl ?? "", { responseType: "text" });
   const calendarData = response.data;
+
+  if (typeof calendarData !== "string") {
+    throw new Error("Calendar fetch did not return text data");
+  }
+
+  // Detect accidental HTML responses (some hosts return an HTML error page)
+  if (calendarData.trim().startsWith("<")) {
+    const preview = calendarData.trim().slice(0, 200);
+    throw new Error("Calendar fetch returned HTML instead of ICS: " + preview);
+  }
 
   const events = ical.parseICS(calendarData);
 
