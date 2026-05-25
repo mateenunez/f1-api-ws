@@ -855,7 +855,9 @@ export default function (
     },
   };
 
-  router.use("/", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  router.get("/", (req: Request, res: Response) => res.send("F1 Telemetry API"));
+
+  router.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
 
   router.get("/calendar", calendarHandle);
 
