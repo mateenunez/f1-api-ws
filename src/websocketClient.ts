@@ -21,7 +21,8 @@ class F1APIWebSocketsClient extends EventEmitter {
   ) {
     super();
     this.setMaxListeners(0);
-    this.bridgeUrl = process.env.BRIDGE_URL || "ws://f1telemetry.duckdns.org:5631";
+    this.bridgeUrl =
+      process.env.BRIDGE_URL || "ws://f1telemetry.duckdns.org:5631";
   }
 
   setClientCountProvider(provider: () => number): void {
@@ -105,16 +106,20 @@ class F1APIWebSocketsClient extends EventEmitter {
       try {
         console.log(`Connecting to bridge at ${this.bridgeUrl}...`);
 
-        const ws = new WebSocket(this.bridgeUrl);
+        const ws = new WebSocket(this.bridgeUrl, {
+          headers: {
+            "bypass-tunnel-reminder": "true",
+          },
+        });
         this.bridgeConnection = ws;
 
-        ws.on('open', () => {
-          console.log('Connected to bridge successfully.');
+        ws.on("open", () => {
+          console.log("Connected to bridge successfully.");
           this.resetAttempts();
           resolve();
         });
 
-        ws.on('message', async (data: Buffer) => {
+        ws.on("message", async (data: Buffer) => {
           try {
             // Decode CBOR data from bridge
             const decodedData = this.decodeCBOR(data);
@@ -135,22 +140,22 @@ class F1APIWebSocketsClient extends EventEmitter {
               console.log("Initial state received and broadcasted.");
             }
           } catch (err) {
-            console.error('Error processing message:', err);
+            console.error("Error processing message:", err);
           }
         });
 
-        ws.on('error', (err) => {
-          console.error('Connection error:', err.message);
+        ws.on("error", (err) => {
+          console.error("Connection error:", err.message);
           reject(err);
         });
 
-        ws.on('close', () => {
-          console.log('Connection closed.');
+        ws.on("close", () => {
+          console.log("Connection closed.");
           this.bridgeConnection = null;
           this.scheduleReconnect();
         });
       } catch (err) {
-        console.error('Error connecting:', err);
+        console.error("Error connecting:", err);
         reject(err);
       }
     });
