@@ -37,6 +37,8 @@ async function main() {
   const argvReplay = process.argv.some((arg) => arg === "--replay");
   console.log("Replay flag is set as", argvReplay);
 
+  let websocketClient: F1APIWebSocketsClient | null = null;
+
   if (process.env.REPLAY_FILE && argvReplay) {
     let fastForwardSeconds = 0;
 
@@ -64,7 +66,7 @@ async function main() {
     eventEmitter = replayProvider;
     replayProvider.run();
   } else {
-    const websocketClient = new F1APIWebSocketsClient(
+    websocketClient = new F1APIWebSocketsClient(
       stateProcessor,
       translationService,
       transcriptionService,
@@ -86,6 +88,7 @@ async function main() {
       chatService,
       userService,
       roleService,
+      websocketClient,
     ),
   );
 

@@ -10,6 +10,7 @@ import { RoleService } from "./roleService";
 import { UserService } from "./userService";
 import { ChatService } from "./chatService";
 import { RedisClient } from "./redisClient";
+import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
 
 interface IcalEvent {
@@ -204,6 +205,7 @@ export default function (
   chatService: ChatService,
   userService: UserService,
   roleService: RoleService,
+  websocketClient: F1APIWebSocketsClient | null,
 ) {
   const router = express.Router();
   const pool = databaseService.getPool();
@@ -345,6 +347,10 @@ export default function (
         name: "Users",
         description: "User authentication and management",
       },
+      {
+        name: "Bridge",
+        description: "Bridge connection control endpoints",
+      },
     ],
     paths: {
       "/db/ping": {
@@ -475,6 +481,19 @@ export default function (
           responses: {
             "200": { description: "Authenticated" },
             "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/admin/bridge/reset-reconnect": {
+        post: {
+          tags: ["Bridge"],
+          summary: "Reset websocket bridge reconnect attempts (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Reconnect attempts reset" },
+            "400": { description: "Bridge client unavailable" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
           },
         },
       },
@@ -939,6 +958,38 @@ export default function (
           .json({ success: false, error: "name and newCooldown required" });
       }
       await roleService.updateRoleCooldown(name, newCooldown);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/admin/bridge/reset-reconnect", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      if (!websocketClient) {
+        return res
+          .status(400)
+          .json({
+            success: false,
+            error: "Websocket bridge client unavailable",
+          });
+      }
+
+      websocketClient.resetReconnectAttempts();
       res.json({ success: true });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });

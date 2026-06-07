@@ -101,6 +101,14 @@ class F1APIWebSocketsClient extends EventEmitter {
     }
   }
 
+  public resetReconnectAttempts(): void {
+    console.log("Resetting websocket bridge reconnect attempts.");
+    this.resetAttempts();
+    if (!this.bridgeConnection) {
+      void this.init();
+    }
+  }
+
   async connectToBridge(): Promise<void> {
     return new Promise((resolve, reject) => {
       try {
