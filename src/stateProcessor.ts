@@ -56,11 +56,10 @@ class StateProcessor implements StateProvider {
 
       if (feedName === "TeamRadio") {
         items = this.fullState?.R?.TeamRadio?.Captures || [];
-      } else if (feedName === "RaceControlMessages") {
+      } else if (feedName === "RaceControlMessagesEs") {
         items = this.fullState?.R?.RaceControlMessages?.Messages || [];
-      } else {
-        items = this.fullState?.R?.RaceControlMessagesEs?.Messages || [];
       }
+
       if (!items || items.length === 0) return [];
 
       return (await this.redis.getList(sessionId, feedName, items)).filter(
