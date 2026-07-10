@@ -8,7 +8,6 @@ import { Response, Request } from "express";
 import { DatabaseService } from "./databaseService";
 import { RoleService } from "./roleService";
 import { UserService } from "./userService";
-import { ChatService } from "./chatService";
 import { RedisClient } from "./redisClient";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
@@ -202,7 +201,6 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
 export default function (
   databaseService: DatabaseService,
   redisClient: RedisClient,
-  chatService: ChatService,
   userService: UserService,
   roleService: RoleService,
   websocketClient: F1APIWebSocketsClient | null,
@@ -344,6 +342,10 @@ export default function (
         description: "Role management endpoints",
       },
       {
+        name: "Settings",
+        description: "Runtime-configurable feature settings (admin only)",
+      },
+      {
         name: "Users",
         description: "User authentication and management",
       },
@@ -381,10 +383,37 @@ export default function (
           },
         },
       },
-      "/roles/update-cooldown": {
-        post: {
-          tags: ["Roles"],
-          summary: "Update role cooldown (admin only)",
+      "/settings/full-data-roles": {
+        get: {
+          tags: ["Settings"],
+          summary:
+            "Get roles that receive full telemetry data (transcriptions/translations) (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "Current role configuration",
+              content: {
+                "application/json": {
+                  example: {
+                    success: true,
+                    roleIds: [1, 2, 3],
+                    roles: [
+                      { id: 1, name: "base" },
+                      { id: 2, name: "premium" },
+                      { id: 3, name: "admin" },
+                    ],
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+        put: {
+          tags: ["Settings"],
+          summary:
+            "Set which roles receive full telemetry data (admin only)",
           security: [{ bearerAuth: [] }],
           requestBody: {
             required: true,
@@ -393,18 +422,21 @@ export default function (
                 schema: {
                   type: "object",
                   properties: {
-                    name: { type: "string" },
-                    newCooldown: { type: "integer" },
+                    roleIds: {
+                      type: "array",
+                      items: { type: "integer" },
+                      example: [2, 3],
+                    },
                   },
-                  required: ["name", "newCooldown"],
+                  required: ["roleIds"],
                 },
               },
             },
           },
           responses: {
-            "200": { description: "Updated" },
-            "400": { description: "Bad request" },
-            "401": { description: "Unauthorized - token required" },
+            "200": { description: "Updated role configuration" },
+            "400": { description: "Bad request - invalid role IDs" },
+            "401": { description: "Unauthorized" },
             "403": { description: "Forbidden - admin role required" },
           },
         },
@@ -492,84 +524,6 @@ export default function (
           responses: {
             "200": { description: "Reconnect attempts reset" },
             "400": { description: "Bridge client unavailable" },
-            "401": { description: "Unauthorized" },
-            "403": { description: "Forbidden - admin role required" },
-          },
-        },
-      },
-      "/chat/pinned": {
-        get: {
-          tags: ["Chat"],
-          summary: "Get pinned chat messages (admin only)",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            "200": { description: "Messages retrieved" },
-            "401": { description: "Unauthorized" },
-            "403": { description: "Forbidden - admin role required" },
-            "500": { description: "Server error" },
-          },
-        },
-      },
-      "/chat/unpinned": {
-        get: {
-          tags: ["Chat"],
-          summary: "Get unpinned chat messages (admin only)",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            "200": { description: "Messages retrieved" },
-            "401": { description: "Unauthorized" },
-            "403": { description: "Forbidden - admin role required" },
-            "500": { description: "Server error" },
-          },
-        },
-      },
-      "/chat/pin": {
-        post: {
-          tags: ["Chat"],
-          summary: "Create a pinned chat message (admin only)",
-          security: [{ bearerAuth: [] }],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    content: {
-                      type: "string",
-                      description: "Message content to pin",
-                    },
-                    lang: { type: "string", description: "Language code" },
-                  },
-                  required: ["content", "lang"],
-                },
-              },
-            },
-          },
-          responses: {
-            "200": { description: "Message pinned successfully" },
-            "400": { description: "Bad request - missing content or lang" },
-            "401": { description: "Unauthorized" },
-            "403": { description: "Forbidden - admin role required" },
-            "404": { description: "Failed to pin message" },
-          },
-        },
-      },
-      "/chat/unpin": {
-        delete: {
-          tags: ["Chat"],
-          summary: "Unpin all messages (admin only)",
-          security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: "lang",
-              in: "query",
-              required: false,
-              schema: { type: "string" },
-            },
-          ],
-          responses: {
-            "200": { description: "Unpinned successfully" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden - admin role required" },
           },
@@ -691,18 +645,7 @@ export default function (
           },
         },
       },
-      "/users/active": {
-        get: {
-          tags: ["Users"],
-          summary: "Find chat active users (admin only)",
-          security: [{ bearerAuth: [] }],
-          responses: {
-            "200": { description: "Active users retrieved successfully" },
-            "401": { description: "Unauthorized - token required" },
-            "403": { description: "Forbidden - admin role required" },
-          },
-        },
-      },
+
       "/users": {
         get: {
           tags: ["Users"],
@@ -735,67 +678,6 @@ export default function (
                 },
               },
             },
-            "401": { description: "Unauthorized" },
-            "403": { description: "Forbidden" },
-          },
-        },
-      },
-      "/users/set-cooldown/{id}": {
-        post: {
-          tags: ["Users"],
-          summary: "Set a user's cooldown (admin only)",
-          security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: "id",
-              in: "path",
-              required: true,
-              schema: { type: "integer" },
-            },
-          ],
-          requestBody: {
-            required: true,
-            content: {
-              "application/json": {
-                schema: {
-                  type: "object",
-                  properties: {
-                    days: {
-                      type: "integer",
-                      example: 7,
-                      description: "Number of days for the cooldown",
-                    },
-                  },
-                  required: ["days"],
-                },
-              },
-            },
-          },
-          responses: {
-            "200": { description: "Cooldown set successfully" },
-            "401": { description: "Unauthorized - token required" },
-            "403": { description: "Forbidden - admin role required" },
-            "400": { description: "Bad request - invalid user ID" },
-          },
-        },
-      },
-      "/users/delete-cooldown/{id}": {
-        delete: {
-          tags: ["Users"],
-          summary: "Remove a user's cooldown/block (admin only)",
-          security: [{ bearerAuth: [] }],
-          parameters: [
-            {
-              name: "id",
-              in: "path",
-              required: true,
-              schema: { type: "integer" },
-              description: "User ID to unblock",
-            },
-          ],
-          responses: {
-            "200": { description: "User unblocked successfully" },
-            "404": { description: "User was not blocked" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden" },
           },
@@ -874,9 +756,23 @@ export default function (
     },
   };
 
-  router.get("/", (req: Request, res: Response) => res.send("F1 Telemetry API"));
+  router.get("/", (req: Request, res: Response) =>   res.json({
+    message: "F1 Telemetry API is running.",
+    swagger: "/swagger",
+  }));
 
-  router.use("/swagger", swaggerUi.serve, swaggerUi.setup(swaggerSpec));
+  router.use(
+    "/swagger",
+    swaggerUi.serve,
+    swaggerUi.setup(swaggerSpec, {
+      swaggerOptions: {
+        // Keeps the entered Bearer token in the browser across page
+        // reloads, so it only needs to be pasted in once per 7-day token
+        // lifetime instead of on every visit.
+        persistAuthorization: true,
+      },
+    }),
+  );
 
   router.get("/calendar", calendarHandle);
 
@@ -935,7 +831,8 @@ export default function (
     }
   });
 
-  router.post("/roles/update-cooldown", async (req: Request, res: Response) => {
+  // GET /settings/full-data-roles - Roles that receive full telemetry data (admin only)
+  router.get("/settings/full-data-roles", async (req: Request, res: Response) => {
     try {
       const token = req.headers.authorization?.split(" ")[1];
       if (!token) {
@@ -951,16 +848,50 @@ export default function (
           .json({ success: false, error: "Admin role required" });
       }
 
-      const { name, newCooldown } = req.body;
-      if (!name || typeof newCooldown !== "number") {
-        return res
-          .status(400)
-          .json({ success: false, error: "name and newCooldown required" });
-      }
-      await roleService.updateRoleCooldown(name, newCooldown);
-      res.json({ success: true });
+      const [roleIds, roles] = await Promise.all([
+        roleService.getFullDataRoleIds(),
+        roleService.getAllRoles(),
+      ]);
+
+      res.json({ success: true, roleIds, roles });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // PUT /settings/full-data-roles - Set which roles receive full telemetry data (admin only)
+  router.put("/settings/full-data-roles", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const { roleIds } = req.body;
+      if (
+        !Array.isArray(roleIds) ||
+        roleIds.length === 0 ||
+        roleIds.some((id: any) => typeof id !== "number" || isNaN(id))
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "roleIds must be a non-empty array of integers",
+        });
+      }
+
+      const updatedRoleIds = await roleService.setFullDataRoles(roleIds);
+      res.json({ success: true, roleIds: updatedRoleIds });
+    } catch (err) {
+      res.status(400).json({ success: false, error: (err as Error).message });
     }
   });
 
@@ -1036,115 +967,22 @@ export default function (
           .status(400)
           .json({ success: false, error: "token required" });
       }
-      const user = await userService.verifyToken(token);
-      res.json({ success: true, user });
+      const result = await userService.verifyToken(token);
+      if (!result) {
+        return res.status(401).json({ success: false, error: "Invalid token" });
+      }
+      res.json({ success: true, user: result.user, token: result.token });
     } catch (err) {
       res.status(401).json({ success: false, error: (err as Error).message });
-    }
-  });
-
-  // Chat pinned messages endpoints
-  router.get("/chat/pinned", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token || !(await verifyAdminRole(token))) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-      const pinned = await chatService.getPinnedMessages();
-      res.json({ success: true, pinned });
-    } catch (err) {
-      res.status(500).json({ success: false, error: (err as Error).message });
-    }
-  });
-
-  router.get("/chat/unpinned", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token || !(await verifyAdminRole(token))) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-      const pinned = await chatService.getUnpinnedMessages();
-      res.json({ success: true, pinned });
-    } catch (err) {
-      res.status(500).json({ success: false, error: (err as Error).message });
-    }
-  });
-
-  router.post("/chat/pin", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token || !(await verifyAdminRole(token))) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
-      const content = req.body.content as string;
-      const lang = req.body.lang as string;
-
-      if (!content) {
-        return res
-          .status(400)
-          .json({ success: false, error: "content is required" });
-      }
-
-      if (!lang || (lang !== "en" && lang !== "es")) {
-        const pinnedEn = await chatService.pinMessage("en", content);
-        const pinnedEs = await chatService.pinMessage("es", content);
-        if (!pinnedEn || !pinnedEs) {
-          return res
-            .status(404)
-            .json({ success: false, error: "Failed to pin messages" });
-        }
-        return res.json({ success: true, pinnedEn, pinnedEs });
-      }
-
-      const pinned = await chatService.pinMessage(lang, content);
-      if (!pinned) {
-        return res
-          .status(404)
-          .json({ success: false, error: "Failed to pin message" });
-      }
-
-      res.json({ success: true, pinned });
-    } catch (err) {
-      res.status(500).json({ success: false, error: (err as Error).message });
-    }
-  });
-
-  router.delete("/chat/unpin", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token || !(await verifyAdminRole(token))) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
-      const lang = (req.query.lang as string) || undefined;
-
-      if (!lang || (lang !== "en" && lang !== "es")) {
-        await chatService.unpinAll("en");
-        await chatService.unpinAll("es");
-        return res.json({ success: true });
-      }
-
-      await chatService.unpinAll(lang);
-      res.json({ success: true });
-    } catch (err) {
-      res.status(500).json({ success: false, error: (err as Error).message });
     }
   });
 
   // Helper function to verify admin role
   async function verifyAdminRole(token: string): Promise<boolean> {
     try {
-      const user = await userService.verifyToken(token);
-      return user.role.id === 3;
+      const result = await userService.verifyToken(token);
+      if (!result) return false;
+      return result.user.role.id === 3;
     } catch {
       return false;
     }
@@ -1287,6 +1125,7 @@ export default function (
             .json({ success: false, error: "Invalid user email" });
         }
         const user = await userService.findByEmail(userEmail);
+        if (user) delete user.password_hash;
         res.json({ success: true, user });
       } catch (error) {
         res
@@ -1322,105 +1161,12 @@ export default function (
             .json({ success: false, error: "Invalid user username" });
         }
         const user = await userService.findByUsername(userUsername);
+        if (user) delete user.password_hash;
         res.json({ success: true, user });
       } catch (error) {
         res
           .status(500)
           .json({ success: false, error: (error as Error).message });
-      }
-    },
-  );
-
-  // POST /users/set-cooldown/:id - Set a user's cooldown (admin only)
-  router.post(
-    "/users/set-cooldown/:id",
-    async (req: Request, res: Response) => {
-      try {
-        const token = req.headers.authorization?.split(" ")[1];
-        if (!token) {
-          return res
-            .status(401)
-            .json({ success: false, error: "Authorization token required" });
-        }
-
-        const isAdmin = await verifyAdminRole(token);
-        if (!isAdmin) {
-          return res
-            .status(403)
-            .json({ success: false, error: "Admin role required" });
-        }
-
-        const userId = Number(req.params.id);
-        if (isNaN(userId)) {
-          return res
-            .status(400)
-            .json({ success: false, error: "Invalid user ID" });
-        }
-
-        const days = Number(req.body.days) || 1; // Default to 1 day if not
-
-        if (!days || typeof days !== "number" || days <= 0) {
-          return res.status(400).json({
-            success: false,
-            error: "A valid number of days is required in the request body",
-          });
-        }
-
-        const newCooldown = days * 24 * 60 * 60;
-        await redisClient.setCooldown(userId, newCooldown);
-
-        res.json({
-          success: true,
-          message: `User ${userId} has been given a cooldown of ${days} day(s)`,
-        });
-      } catch (err) {
-        res.status(500).json({ success: false, error: (err as Error).message });
-      }
-    },
-  );
-
-  // DELETE /users/delete-cooldown/:id - Remove user cooldown (admin only)
-  router.delete(
-    "/users/delete-cooldown/:id",
-    async (req: Request, res: Response) => {
-      try {
-        const token = req.headers.authorization?.split(" ")[1];
-        if (!token) {
-          return res
-            .status(401)
-            .json({ success: false, error: "Authorization token required" });
-        }
-
-        const isAdmin = await verifyAdminRole(token);
-        if (!isAdmin) {
-          return res
-            .status(403)
-            .json({ success: false, error: "Admin role required" });
-        }
-
-        const userId = Number(req.params.id);
-
-        if (isNaN(userId)) {
-          return res
-            .status(400)
-            .json({ success: false, error: "Invalid user ID" });
-        }
-
-        const unblocked = await redisClient.deleteCooldown(userId);
-
-        if (!unblocked) {
-          return res.status(404).json({
-            success: false,
-            error: "User was not blocked or cooldown already expired",
-          });
-        }
-
-        res.json({
-          success: true,
-          message: `User ${userId} has been unblocked successfully`,
-        });
-      } catch (err) {
-        res.status(500).json({ success: false, error: (err as Error).message });
       }
     },
   );
@@ -1507,30 +1253,6 @@ export default function (
       });
     } catch (err) {
       res.status(500).json({ success: false, error: (err as Error).message });
-    }
-  });
-
-  // GET /users/active - Find chat active users (admin only)
-  router.get("/users/active", async (req: Request, res: Response) => {
-    try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
-      const activeUsersStats = await redisClient.getActiveUsersStats();
-      res.json({ success: true, activeUsersStats });
-    } catch (error) {
-      res.status(500).json({ success: false, error: (error as Error).message });
     }
   });
 

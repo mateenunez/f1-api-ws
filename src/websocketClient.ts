@@ -45,6 +45,19 @@ class F1APIWebSocketsClient extends EventEmitter {
   }
 
   broadcast(data: any) {
+    // Always emit plain objects so WebSocketServer can filter per-client
+    // before CBOR-encoding. If a raw Buffer is passed, decode it first.
+    if (Buffer.isBuffer(data) || data instanceof Uint8Array) {
+      try {
+        const decoded = this.decodeCBOR(
+          Buffer.isBuffer(data) ? data : Buffer.from(data),
+        );
+        this.emit("broadcast", decoded ?? data);
+        return;
+      } catch {
+        // fall through and emit as-is
+      }
+    }
     this.emit("broadcast", data);
   }
 
@@ -177,7 +190,8 @@ class F1APIWebSocketsClient extends EventEmitter {
     };
 
     this.addUserCountIfNeeded(streamingData);
-    this.broadcast(this.encodeCBOR(streamingData));
+    // Emit plain object; WebSocketServer handles per-client CBOR encoding + filtering
+    this.broadcast(streamingData);
 
     if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
       void this.receivedInactiveSession();
@@ -243,7 +257,8 @@ class F1APIWebSocketsClient extends EventEmitter {
           },
         ],
       };
-      this.broadcast(this.encodeCBOR(streamingData));
+      // Emit plain object; WebSocketServer handles per-client CBOR encoding + filtering
+      this.broadcast(streamingData);
     } catch (err) {
       console.error("Error in receivedRaceControlMessage:", err);
     }
@@ -302,7 +317,8 @@ class F1APIWebSocketsClient extends EventEmitter {
       const streamingData = {
         M: [{ H: "Streaming", M: "feed", A: [feedName, payload, timestamp] }],
       };
-      this.broadcast(this.encodeCBOR(streamingData));
+      // Emit plain object; WebSocketServer handles per-client CBOR encoding + filtering
+      this.broadcast(streamingData);
     } catch (err) {
       console.error("Error in receivedTeamRadio:", err);
     }

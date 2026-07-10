@@ -6,12 +6,9 @@ export interface User {
   username: string;
   role: {
     name: string;
-    cooldown_ms: number;
     id: number;
   };
   email: string;
-  chat_color: string;
-  chat_badge?: string;
   created_at: Date;
 }
 
@@ -33,9 +30,8 @@ export class UserService {
     const res = await this.pool.query(query, [username, email, hash]);
     const created = res.rows[0];
 
-    // Fetch role name and cooldown for the created user
     const infoQuery = `
-      SELECT u.id, u.username, r.name as role_name, r.cooldown_ms
+      SELECT u.id, u.username, r.name as role_name
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -47,12 +43,9 @@ export class UserService {
       id: userData.id,
       email: userData.email,
       username: userData.username,
-      chat_color: userData.chat_color,
-      chat_badge: userData.chat_badge,
       role: {
         id: userData.role_id,
         name: userData.role_name,
-        cooldown_ms: userData.cooldown_ms,
       },
       created_at: userData.created_at,
     };
@@ -60,7 +53,6 @@ export class UserService {
     const token = this.generateToken({
       id: user.id,
       role_name: user.role.name,
-      cooldown_ms: user.role.cooldown_ms,
     });
 
     return { user, token };
@@ -78,12 +70,9 @@ export class UserService {
       id: userData.id,
       email: userData.email,
       username: userData.username,
-      chat_color: userData.chat_color,
-      chat_badge: userData.chat_badge,
       role: {
         id: userData.role_id,
         name: userData.role_name,
-        cooldown_ms: userData.cooldown_ms,
       },
       created_at: userData.created_at,
     };
@@ -97,7 +86,6 @@ export class UserService {
         {
           id: user.id,
           role: user.role_name,
-          cooldown: user.cooldown_ms,
         },
         this.JWT_SECRET,
         { expiresIn: "7d" },
@@ -111,7 +99,7 @@ export class UserService {
       const decoded = jwt.verify(token, this.JWT_SECRET) as any;
 
       const query = `
-      SELECT u.id, u.username, u.chat_color, u.chat_badge, u.email, u.created_at, r.name as role_name, r.id as role_id, r.cooldown_ms
+      SELECT u.id, u.username, u.email, u.created_at, r.name as role_name, r.id as role_id
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.id = $1;
@@ -126,17 +114,14 @@ export class UserService {
         id: userData.id,
         email: userData.email,
         username: userData.username,
-        chat_color: userData.chat_color,
-        chat_badge: userData.chat_badge,
         role: {
           id: userData.role_id,
           name: userData.role_name,
-          cooldown_ms: userData.cooldown_ms,
         },
         created_at: userData.created_at,
       };
 
-      return user;
+      return { user, token: this.generateToken(userData) };
     } catch (error) {
       throw new Error("INVALID_TOKEN");
     }
@@ -144,7 +129,7 @@ export class UserService {
 
   async findByEmail(email: string) {
     const query = `
-      SELECT u.*, r.name as role_name, r.cooldown_ms 
+      SELECT u.*, r.name as role_name
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE LOWER(u.email) = $1;
@@ -155,7 +140,7 @@ export class UserService {
 
   async findByUsername(username: string) {
     const query = `
-      SELECT u.*, r.name as role_name, r.cooldown_ms 
+      SELECT u.*, r.name as role_name
       FROM users u
       JOIN roles r ON u.role_id = r.id
       WHERE u.username = $1;
@@ -168,7 +153,7 @@ export class UserService {
     const offset = (page - 1) * limit;
 
     const dataQuery = `
-    SELECT u.id, u.username, u.email, u.role_id, u.created_at, u.chat_color, u.chat_badge, r.name as role_name, r.cooldown_ms
+    SELECT u.id, u.username, u.email, u.role_id, u.created_at, r.name as role_name
     FROM users u
     JOIN roles r ON u.role_id = r.id
     ORDER BY u.created_at DESC
@@ -201,7 +186,7 @@ export class UserService {
     const offset = (page - 1) * limit;
 
     const dataQuery = `
-    SELECT u.id, u.username, u.email, u.role_id, u.created_at, u.chat_color, u.chat_badge, r.name as role_name, r.cooldown_ms
+    SELECT u.id, u.username, u.email, u.role_id, u.created_at, r.name as role_name
     FROM users u 
     JOIN roles r ON u.role_id = r.id 
     WHERE u.role_id = $1
@@ -262,38 +247,6 @@ export class UserService {
     } catch (error) {
       throw new Error(
         `Failed to update user role: ${error instanceof Error ? error.message : "Unknown error"}`,
-      );
-    }
-  }
-
-  async updateUserAppearance(
-    userId: number,
-    color: string,
-    badge: string,
-  ): Promise<any> {
-    try {
-      const userQuery =
-        "SELECT chat_color, chat_badge FROM users WHERE id = $1";
-      const userRes = await this.pool.query(userQuery, [userId]);
-
-      if (userRes.rows.length === 0 || userRes.rows[0].role_id === 1) {
-        // If does not exist or if is base user, do not allow updating appearance
-        return null;
-      }
-
-      const updateQuery = `
-      UPDATE users 
-      SET chat_color = $1, chat_badge = $2 
-      WHERE id = $3 
-      RETURNING id, username, chat_color, chat_badge
-    `;
-
-      const result = await this.pool.query(updateQuery, [color, badge, userId]);
-
-      return result.rows[0] || null;
-    } catch (error) {
-      throw new Error(
-        `Failed to update user appearance: ${error instanceof Error ? error.message : "Unknown error"}`,
       );
     }
   }

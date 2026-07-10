@@ -6,7 +6,6 @@ interface FullState {
 
 interface StateProvider {
   getState(): FullState;
-  saveChatMessage(payload: any, channel: string): void;
 }
 class StateProcessor implements StateProvider {
   fullState: FullState;
@@ -116,22 +115,6 @@ class StateProcessor implements StateProvider {
     }
   }
 
-  saveChatMessage(payload: any, channel: string) {
-    if (!this.fullState.R[channel]) {
-      this.fullState.R[channel] = { Messages: [] };
-    }
-
-    const messages = this.fullState.R[channel].Messages;
-
-    // is a retransmited message
-    payload.fromRetransmition = true;
-
-    messages.push(payload);
-
-    if (messages.length > 5) {
-      messages.shift();
-    }
-  }
 
   processFeed(feedName: string, data: any, timestamp: string) {
     if (!this.fullState.R) {

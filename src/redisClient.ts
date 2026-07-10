@@ -1,12 +1,5 @@
 import Redis, { Redis as RedisType } from "ioredis";
 
-interface UserStats {
-  base: number;
-  premium: number;
-  admin: number;
-  total: number;
-  [key: string]: number;
-}
 
 class RedisClient {
   private client: RedisType;
@@ -70,67 +63,6 @@ class RedisClient {
     } catch (err) {
       console.error("Error at get one text:", err);
       throw err;
-    }
-  }
-
-  async setCooldown(userId: number, cooldown: number) {
-    if (cooldown <= 0) return;
-    await this.client.set(`cooldown:${userId}`, "1", "EX", cooldown);
-  }
-
-  async hasCooldown(userId: number) {
-    const cooldown = await this.client.exists(`cooldown:${userId}`);
-    return cooldown === 1;
-  }
-
-  async deleteCooldown(userId: number): Promise<boolean> {
-    const result = await this.client.del(`cooldown:${userId}`);
-    return result === 1;
-  }
-
-  async setChatActivity(userId: number, role: string) {
-    await this.client.set(`active:${userId}`, role, "EX", 300);
-  }
-
-  async getActiveUsersStats() {
-    let cursor = "0";
-    const stats: UserStats = {
-      base: 0,
-      premium: 0,
-      admin: 0,
-      total: 0,
-    };
-
-    try {
-      do {
-        const [newCursor, keys] = await this.client.scan(
-          cursor,
-          "MATCH",
-          "active:*",
-          "COUNT",
-          100,
-        );
-        cursor = newCursor;
-
-        if (keys.length > 0) {
-          const values = await this.client.mget(keys);
-
-          values.forEach((value) => {
-            if (value && stats.hasOwnProperty(value)) {
-              stats[value]++;
-              stats.total++;
-            }
-          });
-        }
-      } while (cursor !== "0");
-
-      return stats;
-    } catch (error) {
-      console.error(
-        "Error obteniendo estadísticas de usuarios activos:",
-        error,
-      );
-      return stats;
     }
   }
 

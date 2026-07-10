@@ -24,8 +24,7 @@ export class DatabaseService {
       await client.query(`
         CREATE TABLE IF NOT EXISTS roles (
           id SERIAL PRIMARY KEY,
-          name VARCHAR(50) UNIQUE NOT NULL,
-          cooldown_ms INTEGER NOT NULL DEFAULT 10000
+          name VARCHAR(50) UNIQUE NOT NULL
         );
       `);
 
@@ -41,25 +40,41 @@ export class DatabaseService {
       `);
 
       await client.query(`
-        INSERT INTO roles (name, cooldown_ms)
-        VALUES ('base', 5000), ('premium', 1000), ('admin', 1000)
+        INSERT INTO roles (name)
+        VALUES ('base'), ('premium'), ('admin')
         ON CONFLICT (name) DO NOTHING;
       `);
 
+      // Drop legacy chat customization columns: the feature was removed but
+      // existing databases (created before this cleanup) may still have
+      // them. Dropping the columns doesn't touch existing user rows.
       await client.query(`
-        ALTER TABLE users 
-        ADD COLUMN IF NOT EXISTS chat_color VARCHAR(7) DEFAULT '',
-        ADD COLUMN IF NOT EXISTS chat_badge VARCHAR(20) DEFAULT '';
+        ALTER TABLE users
+        DROP COLUMN IF EXISTS chat_color,
+        DROP COLUMN IF EXISTS chat_badge;
       `);
 
+      // Drop the pinned chat messages feature: announcements are now handled
+      // externally (e.g. Discord), so the table is no longer needed. This
+      // only drops chat_pinned_messages, leaving users/roles untouched.
       await client.query(`
-        CREATE TABLE IF NOT EXISTS chat_pinned_messages (
-          id SERIAL PRIMARY KEY,
-          content TEXT NOT NULL,
-          language VARCHAR(2) NOT NULL,
-          timestamp TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP,
-          pinned BOOLEAN NOT NULL DEFAULT FALSE
+        DROP TABLE IF EXISTS chat_pinned_messages;
+      `);
+
+      // Roles allowed to receive full telemetry data (transcriptions/translations)
+      // over the websocket. Admin-configurable via PUT /settings/full-data-roles.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS full_data_roles (
+          role_id INTEGER PRIMARY KEY REFERENCES roles(id) ON DELETE CASCADE
         );
+      `);
+
+      // Default to every existing role, matching the current "any logged-in
+      // user" behavior until an admin narrows it down.
+      await client.query(`
+        INSERT INTO full_data_roles (role_id)
+        SELECT id FROM roles
+        ON CONFLICT (role_id) DO NOTHING;
       `);
 
       // Create admin user if it doesn't exist

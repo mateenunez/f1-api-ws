@@ -13,7 +13,6 @@ import { RedisClient } from "./redisClient";
 import { DatabaseService } from "./databaseService";
 import createRouter from "./api";
 import { UserService } from "./userService";
-import { ChatService } from "./chatService";
 import { RoleService } from "./roleService";
 dotenv.config();
 
@@ -76,7 +75,6 @@ async function main() {
   }
 
   const userService = new UserService(databaseService.getPool());
-  const chatService = new ChatService(databaseService.getPool(), eventEmitter);
   const roleService = new RoleService(databaseService.getPool());
 
   // mount API router with injected services
@@ -85,7 +83,6 @@ async function main() {
     createRouter(
       databaseService,
       redisClient,
-      chatService,
       userService,
       roleService,
       websocketClient,
@@ -98,7 +95,7 @@ async function main() {
     eventEmitter,
     redisClient,
     userService,
-    chatService,
+    roleService,
   ); // Handles client connections and listens to the event bus.
 
   if (eventEmitter instanceof F1APIWebSocketsClient) {
