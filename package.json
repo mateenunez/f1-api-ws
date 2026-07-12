@@ -1,6 +1,6 @@
 {
   "name": "f1-api-ws",
-  "version": "2.2.2",
+  "version": "2.0.0",
   "main": "./src/app.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",

@@ -8,6 +8,7 @@ import { Response, Request } from "express";
 import { DatabaseService } from "./databaseService";
 import { RoleService } from "./roleService";
 import { UserService } from "./userService";
+import { ConfigService } from "./configService";
 import { RedisClient } from "./redisClient";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
@@ -203,6 +204,7 @@ export default function (
   redisClient: RedisClient,
   userService: UserService,
   roleService: RoleService,
+  configService: ConfigService,
   websocketClient: F1APIWebSocketsClient | null,
 ) {
   const router = express.Router();
@@ -436,6 +438,54 @@ export default function (
           responses: {
             "200": { description: "Updated role configuration" },
             "400": { description: "Bad request - invalid role IDs" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/config/discord-link": {
+        get: {
+          tags: ["Settings"],
+          summary: "Get the current Discord invite link",
+          description:
+            "Public endpoint. Backed by Postgres so it survives redeploys; the frontend caches this for 10 days via Next.js data cache.",
+          responses: {
+            "200": {
+              description: "Current Discord invite link",
+              content: {
+                "application/json": {
+                  example: { success: true, url: "https://discord.gg/abc123" },
+                },
+              },
+            },
+          },
+        },
+        put: {
+          tags: ["Settings"],
+          summary: "Rotate the Discord invite link (admin only)",
+          description:
+            "Persists the new link to Postgres and best-effort triggers the frontend to revalidate its cached copy immediately.",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    url: {
+                      type: "string",
+                      example: "https://discord.gg/abc123",
+                    },
+                  },
+                  required: ["url"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated Discord invite link" },
+            "400": { description: "Bad request - invalid invite URL" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden - admin role required" },
           },
@@ -890,6 +940,64 @@ export default function (
 
       const updatedRoleIds = await roleService.setFullDataRoles(roleIds);
       res.json({ success: true, roleIds: updatedRoleIds });
+    } catch (err) {
+      res.status(400).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // GET /config/discord-link - Current Discord invite link (public)
+  router.get("/config/discord-link", async (req: Request, res: Response) => {
+    try {
+      const url = await configService.getDiscordInviteUrl();
+      res.json({ success: true, url });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // PUT /config/discord-link - Rotate the Discord invite link (admin only)
+  router.put("/config/discord-link", async (req: Request, res: Response) => {
+    try {
+      const token = req.headers.authorization?.split(" ")[1];
+      if (!token) {
+        return res
+          .status(401)
+          .json({ success: false, error: "Authorization token required" });
+      }
+
+      const isAdmin = await verifyAdminRole(token);
+      if (!isAdmin) {
+        return res
+          .status(403)
+          .json({ success: false, error: "Admin role required" });
+      }
+
+      const { url } = req.body;
+      if (typeof url !== "string" || !/^https:\/\/discord\.gg\/[\w-]+$/.test(url)) {
+        return res.status(400).json({
+          success: false,
+          error: "url must be a valid https://discord.gg/<code> invite link",
+        });
+      }
+
+      const updatedUrl = await configService.setDiscordInviteUrl(url);
+
+      // Best-effort: bust the frontend's cached copy immediately instead of
+      // waiting for its 10-day revalidation window. If this fails (frontend
+      // down, misconfigured secret), the link is still saved and the
+      // frontend will pick it up on its next scheduled revalidation.
+      if (process.env.FRONTEND_REVALIDATE_URL && process.env.REVALIDATE_SECRET) {
+        axios
+          .post(process.env.FRONTEND_REVALIDATE_URL, {
+            tag: "discord-link",
+            secret: process.env.REVALIDATE_SECRET,
+          })
+          .catch((err) =>
+            console.error("Failed to trigger frontend revalidation:", err.message),
+          );
+      }
+
+      res.json({ success: true, url: updatedUrl });
     } catch (err) {
       res.status(400).json({ success: false, error: (err as Error).message });
     }

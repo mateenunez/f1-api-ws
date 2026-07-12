@@ -14,6 +14,7 @@ import { DatabaseService } from "./databaseService";
 import createRouter from "./api";
 import { UserService } from "./userService";
 import { RoleService } from "./roleService";
+import { ConfigService } from "./configService";
 dotenv.config();
 
 async function main() {
@@ -76,6 +77,7 @@ async function main() {
 
   const userService = new UserService(databaseService.getPool());
   const roleService = new RoleService(databaseService.getPool());
+  const configService = new ConfigService(databaseService.getPool());
 
   // mount API router with injected services
   app.use(
@@ -85,6 +87,7 @@ async function main() {
       redisClient,
       userService,
       roleService,
+      configService,
       websocketClient,
     ),
   );

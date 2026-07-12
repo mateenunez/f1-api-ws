@@ -77,6 +77,28 @@ export class DatabaseService {
         ON CONFLICT (role_id) DO NOTHING;
       `);
 
+      // Generic runtime-configurable settings store. First use case: the
+      // Discord invite link, which expires every 30 days and previously
+      // required editing .env and redeploying the frontend to rotate.
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS app_config (
+          key VARCHAR(100) PRIMARY KEY,
+          value TEXT NOT NULL,
+          updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      // Seed the initial Discord link from env on first boot only; after
+      // that, it's managed exclusively via PUT /config/discord-link.
+      if (process.env.DISCORD_INVITE_URL) {
+        await client.query(
+          `INSERT INTO app_config (key, value)
+           VALUES ('discord_invite_url', $1)
+           ON CONFLICT (key) DO NOTHING`,
+          [process.env.DISCORD_INVITE_URL],
+        );
+      }
+
       // Create admin user if it doesn't exist
       await this.createAdminUserIfNotExists(client);
 
