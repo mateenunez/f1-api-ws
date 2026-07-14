@@ -12,6 +12,7 @@ import { ConfigService } from "./configService";
 import { RedisClient } from "./redisClient";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
+import { createAuthMiddleware } from "./middleware/auth";
 
 interface IcalEvent {
   id: string;
@@ -212,6 +213,7 @@ export default function (
   const paginationLimit = 50;
   const premiumRoleId = 2;
   const baseRoleId = 1;
+  const { requireAdmin } = createAuthMiddleware(userService);
 
   async function calendarHandle(req: Request, res: Response) {
     try {
@@ -882,22 +884,8 @@ export default function (
   });
 
   // GET /settings/full-data-roles - Roles that receive full telemetry data (admin only)
-  router.get("/settings/full-data-roles", async (req: Request, res: Response) => {
+  router.get("/settings/full-data-roles", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const [roleIds, roles] = await Promise.all([
         roleService.getFullDataRoleIds(),
         roleService.getAllRoles(),
@@ -910,22 +898,8 @@ export default function (
   });
 
   // PUT /settings/full-data-roles - Set which roles receive full telemetry data (admin only)
-  router.put("/settings/full-data-roles", async (req: Request, res: Response) => {
+  router.put("/settings/full-data-roles", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const { roleIds } = req.body;
       if (
         !Array.isArray(roleIds) ||
@@ -956,22 +930,8 @@ export default function (
   });
 
   // PUT /config/discord-link - Rotate the Discord invite link (admin only)
-  router.put("/config/discord-link", async (req: Request, res: Response) => {
+  router.put("/config/discord-link", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const { url } = req.body;
       if (typeof url !== "string" || !/^https:\/\/discord\.gg\/[\w-]+$/.test(url)) {
         return res.status(400).json({
@@ -1003,22 +963,8 @@ export default function (
     }
   });
 
-  router.post("/admin/bridge/reset-reconnect", async (req: Request, res: Response) => {
+  router.post("/admin/bridge/reset-reconnect", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       if (!websocketClient) {
         return res
           .status(400)
@@ -1085,33 +1031,9 @@ export default function (
     }
   });
 
-  // Helper function to verify admin role
-  async function verifyAdminRole(token: string): Promise<boolean> {
-    try {
-      const result = await userService.verifyToken(token);
-      if (!result) return false;
-      return result.user.role.id === 3;
-    } catch {
-      return false;
-    }
-  }
-
   // GET /users - Get all registered users (admin only)
-  router.get("/users", async (req: Request, res: Response) => {
+  router.get("/users", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
       const page = parseInt(req.query.page as string) || 1;
 
       const { users, totalCount } = await userService.getAllUsersPaginated(
@@ -1133,21 +1055,8 @@ export default function (
   });
 
   // GET /users/base - Get all base users (admin only)
-  router.get("/users/base", async (req: Request, res: Response) => {
+  router.get("/users/base", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
       const page = parseInt(req.query.page as string) || 1;
 
       const { users, totalCount } = await userService.getUsersByRolePaginated(
@@ -1170,22 +1079,8 @@ export default function (
   });
 
   // GET /users/premium - Get all premium users (admin only)
-  router.get("/users/premium", async (req: Request, res: Response) => {
+  router.get("/users/premium", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const page = parseInt(req.query.page as string) || 1;
 
       const { users, totalCount } = await userService.getUsersByRolePaginated(
@@ -1210,22 +1105,9 @@ export default function (
   // GET /users/find-by-email/:email - Find a user by its email (admin only)
   router.get(
     "/users/find-by-email/:email",
+    requireAdmin,
     async (req: Request, res: Response) => {
       try {
-        const token = req.headers.authorization?.split(" ")[1];
-        if (!token) {
-          return res
-            .status(401)
-            .json({ success: false, error: "Authorization token required" });
-        }
-
-        const isAdmin = await verifyAdminRole(token);
-        if (!isAdmin) {
-          return res
-            .status(403)
-            .json({ success: false, error: "Admin role required" });
-        }
-
         const userEmail = req.params.email;
         if (!userEmail) {
           return res
@@ -1246,22 +1128,9 @@ export default function (
   // GET /users/find-by-username/:username - Find a user by its username (admin only)
   router.get(
     "/users/find-by-username/:username",
+    requireAdmin,
     async (req: Request, res: Response) => {
       try {
-        const token = req.headers.authorization?.split(" ")[1];
-        if (!token) {
-          return res
-            .status(401)
-            .json({ success: false, error: "Authorization token required" });
-        }
-
-        const isAdmin = await verifyAdminRole(token);
-        if (!isAdmin) {
-          return res
-            .status(403)
-            .json({ success: false, error: "Admin role required" });
-        }
-
         const userUsername = req.params.username;
         if (!userUsername) {
           return res
@@ -1280,22 +1149,8 @@ export default function (
   );
 
   // DELETE /users/:id - Delete a user (admin only)
-  router.delete("/users/:id", async (req: Request, res: Response) => {
+  router.delete("/users/:id", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const userId = Number(req.params.id);
       if (isNaN(userId)) {
         return res
@@ -1317,22 +1172,8 @@ export default function (
   });
 
   // POST /users/:id/role - Change user role (admin only)
-  router.post("/users/:id/role", async (req: Request, res: Response) => {
+  router.post("/users/:id/role", requireAdmin, async (req: Request, res: Response) => {
     try {
-      const token = req.headers.authorization?.split(" ")[1];
-      if (!token) {
-        return res
-          .status(401)
-          .json({ success: false, error: "Authorization token required" });
-      }
-
-      const isAdmin = await verifyAdminRole(token);
-      if (!isAdmin) {
-        return res
-          .status(403)
-          .json({ success: false, error: "Admin role required" });
-      }
-
       const userId = Number(req.params.id);
       if (isNaN(userId)) {
         return res
