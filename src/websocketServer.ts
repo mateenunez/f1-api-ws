@@ -252,6 +252,14 @@ class WebSocketTelemetryServer {
         callback(true);
       },
     });
+    // Single shared subscription for the server's lifetime, instead of one
+    // eventBus listener per connected client. filterMessageForUnauthenticated
+    // + encodeCBOR only ever produce two distinct outputs per broadcast (full
+    // access vs. filtered), so each is computed at most once here and reused
+    // across every client on that side of the split, rather than redone once
+    // per socket (O(clients) CBOR encodes per feed tick otherwise).
+    eventBus.on("broadcast", (data: any) => this.handleBroadcast(data));
+
     this.wss.on("connection", async (ws: AuthenticatedSocket, req: AuthenticatedRequest) => {
       if (req.authUser) {
         ws.user = req.authUser;
@@ -259,35 +267,7 @@ class WebSocketTelemetryServer {
         ws.hasFullDataAccess = await this.resolveFullDataAccess(req.authUser);
       }
 
-      // Per-client event listener: filter by auth state, then CBOR-encode and send
-      const eventListener = (data: any) => {
-        if (ws.readyState !== WebSocket.OPEN) return;
-        try {
-          let payload = data;
-
-          if (!ws.hasFullDataAccess) {
-            payload = this.filterMessageForUnauthenticated(data);
-            if (payload === null) return; // suppress entirely for this client
-          }
-
-          // Event bus now emits plain objects; encode to CBOR per-client.
-          // If a raw buffer arrives (legacy fallback), normalise it instead.
-          const encoded =
-            Buffer.isBuffer(payload) || payload instanceof Uint8Array
-              ? this.normalizeOutgoingMessage(payload)
-              : this.encodeCBOR(payload);
-
-          ws.send(encoded);
-        } catch (err) {
-          console.error("Error sending broadcast message:", err);
-        }
-      };
-
-      console.log("Clients connected: " + this.wss.clients.size);
-
       this.sendInitialState(ws);
-
-      eventBus.on("broadcast", eventListener);
 
       ws.on("message", async (rawData) => {
         try {
@@ -344,11 +324,52 @@ class WebSocketTelemetryServer {
           console.error("Error at websocket server message.");
         }
       });
-
-      ws.on("close", () => {
-        eventBus.off("broadcast", eventListener);
-      });
     });
+  }
+
+  private encodeForSend(payload: any): Buffer {
+    // Event bus emits plain objects; encode to CBOR. If a raw buffer arrives
+    // (legacy fallback), normalise it instead.
+    return Buffer.isBuffer(payload) || payload instanceof Uint8Array
+      ? this.normalizeOutgoingMessage(payload)
+      : this.encodeCBOR(payload);
+  }
+
+  /**
+   * Fan out one broadcast event to every connected client, computing the
+   * full-access and filtered CBOR encodings at most once each per event
+   * (instead of once per client) and reusing them across all clients on
+   * that side of the auth split.
+   */
+  private handleBroadcast(data: any) {
+    if (this.wss.clients.size === 0) return;
+
+    let fullEncoded: Buffer | undefined;
+    // undefined = not yet computed; null = filtered result is fully suppressed
+    let filteredEncoded: Buffer | null | undefined;
+
+    for (const client of this.wss.clients) {
+      const ws = client as AuthenticatedSocket;
+      if (ws.readyState !== WebSocket.OPEN) continue;
+
+      try {
+        if (ws.hasFullDataAccess) {
+          if (fullEncoded === undefined) {
+            fullEncoded = this.encodeForSend(data);
+          }
+          ws.send(fullEncoded);
+        } else {
+          if (filteredEncoded === undefined) {
+            const filteredPayload = this.filterMessageForUnauthenticated(data);
+            filteredEncoded =
+              filteredPayload === null ? null : this.encodeForSend(filteredPayload);
+          }
+          if (filteredEncoded !== null) ws.send(filteredEncoded);
+        }
+      } catch (err) {
+        console.error("Error sending broadcast message:", err);
+      }
+    }
   }
 
   getClientCount(): number {

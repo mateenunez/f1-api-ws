@@ -7,8 +7,20 @@ interface FullState {
 interface StateProvider {
   getState(): FullState;
 }
+
+interface ClockAnchor {
+  remainingMs: number;
+  extrapolating: boolean;
+  receivedAt: number;
+}
+
 class StateProcessor implements StateProvider {
   fullState: FullState;
+
+  // Anchors the last real ExtrapolatedClock tick to the server's own receipt
+  // time, so getState() can re-derive "remaining right now" for a client
+  // connecting mid-session instead of handing out a stale Remaining value.
+  private clockAnchor: ClockAnchor | null = null;
 
   constructor(private redis: RedisClient) {
     this.fullState = {
@@ -16,8 +28,79 @@ class StateProcessor implements StateProvider {
     };
   }
 
+  private parseRemaining(remaining: string): number | null {
+    if (typeof remaining !== "string") return null;
+    const parts = remaining.split(":").map(Number);
+    if (parts.length !== 3 || parts.some((n) => Number.isNaN(n))) return null;
+    const [hours, minutes, seconds] = parts;
+    return (hours * 3600 + minutes * 60 + seconds) * 1000;
+  }
+
+  private formatRemaining(ms: number): string {
+    const totalSeconds = Math.max(0, Math.round(ms / 1000));
+    const pad = (n: number) => n.toString().padStart(2, "0");
+    return [
+      Math.floor(totalSeconds / 3600),
+      Math.floor((totalSeconds % 3600) / 60),
+      totalSeconds % 60,
+    ]
+      .map(pad)
+      .join(":");
+  }
+
+  // Re-syncs the anchor from whatever the feed just gave us. F1 only pushes
+  // this feed on state changes (extrapolating on/off, red flag, etc.), not
+  // once a second, so this anchor is what lets us reconstruct "remaining
+  // now" long after the last actual update.
+  private syncClockAnchor() {
+    const clock = this.fullState.R?.ExtrapolatedClock;
+    if (!clock) return;
+
+    const remainingMs = this.parseRemaining(clock.Remaining);
+    if (remainingMs === null) return;
+
+    this.clockAnchor = {
+      remainingMs,
+      extrapolating: !!clock.Extrapolating,
+      receivedAt: Date.now(),
+    };
+  }
+
+  // deepMerge only ever adds/overwrites keys, it never drops stale ones, so
+  // RaceControlMessages/TeamRadio would otherwise keep accumulating across
+  // an entire race weekend (they're only wiped wholesale when the bridge
+  // connection resets on SessionStatus "Inactive", which doesn't fire
+  // between e.g. FP1 -> FP2 -> Quali -> Race). Clear them explicitly the
+  // moment SessionInfo.Path shows we've moved to a new session, so a client
+  // connecting mid-session doesn't see messages/radios left over from the
+  // previous one.
+  private resetPerSessionFeeds() {
+    console.log("New session detected, clearing race control and team radio state.");
+    this.fullState.R.RaceControlMessages = { Messages: {} };
+    this.fullState.R.RaceControlMessagesEs = { Messages: {} };
+    this.fullState.R.TeamRadio = { Captures: {} };
+  }
+
   getState() {
-    return this.fullState;
+    if (!this.clockAnchor || !this.fullState.R?.ExtrapolatedClock) {
+      return this.fullState;
+    }
+
+    const { remainingMs, extrapolating, receivedAt } = this.clockAnchor;
+    const liveMs = extrapolating
+      ? Math.max(0, remainingMs - (Date.now() - receivedAt))
+      : remainingMs;
+
+    return {
+      ...this.fullState,
+      R: {
+        ...this.fullState.R,
+        ExtrapolatedClock: {
+          ...this.fullState.R.ExtrapolatedClock,
+          Remaining: this.formatRemaining(liveMs),
+        },
+      },
+    };
   }
 
   getPath() {
@@ -87,11 +170,13 @@ class StateProcessor implements StateProvider {
 
   async updateState(newState: FullState) {
     this.fullState = newState;
+    this.syncClockAnchor();
     await this.updateRedis();
   }
 
   async updateStatePremium(newState: FullState) {
     this.fullState.R = newState;
+    this.syncClockAnchor();
     await this.updateRedis();
   }
 
@@ -188,11 +273,22 @@ class StateProcessor implements StateProvider {
         }
         break;
 
-      case "SessionInfo":
+      case "SessionInfo": {
         if (this.fullState?.R?.SessionInfo) {
+          const previousPath = this.fullState.R.SessionInfo?.Path;
           this.deepMerge(this.fullState.R.SessionInfo, data);
+
+          if (
+            typeof data?.Path === "string" &&
+            data.Path &&
+            previousPath &&
+            data.Path !== previousPath
+          ) {
+            this.resetPerSessionFeeds();
+          }
         }
         break;
+      }
 
       case "SessionData":
         if (this.fullState?.R?.SessionData) {
@@ -203,6 +299,7 @@ class StateProcessor implements StateProvider {
       case "ExtrapolatedClock":
         if (this.fullState?.R?.ExtrapolatedClock) {
           this.deepMerge(this.fullState.R.ExtrapolatedClock, data);
+          this.syncClockAnchor();
         }
         break;
 

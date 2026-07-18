@@ -1,6 +1,7 @@
 import express from "express";
 import cors from "cors";
 import http from "http";
+import { monitorEventLoopDelay } from "perf_hooks";
 import { WebSocketTelemetryServer } from "./websocketServer";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import { StateProcessor } from "./stateProcessor";
@@ -106,6 +107,29 @@ async function main() {
       telemetryServer.getClientCount(),
     );
   }
+
+  // Cheap, always-on canary: correlates event-loop lag and CPU time against
+  // connected client count so a synchronous bottleneck (e.g. per-client
+  // CBOR encoding on broadcast) shows up before reaching for a profiler.
+  const eventLoopDelay = monitorEventLoopDelay({ resolution: 20 });
+  eventLoopDelay.enable();
+  let lastCpuUsage = process.cpuUsage();
+
+  setInterval(() => {
+    const cpuDelta = process.cpuUsage(lastCpuUsage);
+    lastCpuUsage = process.cpuUsage();
+
+    console.log("[metrics]", {
+      clients: telemetryServer.getClientCount(),
+      evtLoopDelayP50Ms: (eventLoopDelay.percentile(50) / 1e6).toFixed(2),
+      evtLoopDelayP99Ms: (eventLoopDelay.percentile(99) / 1e6).toFixed(2),
+      evtLoopDelayMaxMs: (eventLoopDelay.max / 1e6).toFixed(2),
+      cpuUserMs: (cpuDelta.user / 1000).toFixed(1),
+      cpuSystemMs: (cpuDelta.system / 1000).toFixed(1),
+    });
+
+    eventLoopDelay.reset();
+  }, 5000);
 
   server.listen(PORT, () => {
     console.log("Server listening on port: " + PORT);

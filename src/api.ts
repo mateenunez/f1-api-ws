@@ -4,6 +4,10 @@ import dotenv from "dotenv";
 dotenv.config();
 import ical from "ical";
 import axios from "axios";
+import inspector from "inspector";
+import fs from "fs";
+import os from "os";
+import path from "path";
 import { Response, Request } from "express";
 import { DatabaseService } from "./databaseService";
 import { RoleService } from "./roleService";
@@ -38,6 +42,15 @@ interface EventsByLocation {
 
 function isSafe(url: string) {
   return url.startsWith("https://livetiming.formula1.com/");
+}
+
+// Practice sessions always open the race weekend on a Friday, so if the
+// next event is 5 days away or less, "now" already falls within that
+// weekend's build-up (e.g. the Monday before a Friday FP1).
+const WEEK_RACE_THRESHOLD_MS = 5 * 24 * 60 * 60 * 1000;
+
+function isWeekRace(timeDiffMs: number): boolean {
+  return timeDiffMs <= WEEK_RACE_THRESHOLD_MS;
 }
 
 function parseIcalDate(raw: any): Date | null {
@@ -214,6 +227,7 @@ export default function (
   const premiumRoleId = 2;
   const baseRoleId = 1;
   const { requireAdmin } = createAuthMiddleware(userService);
+  let activeProfileSession: inspector.Session | null = null;
 
   async function calendarHandle(req: Request, res: Response) {
     try {
@@ -229,6 +243,7 @@ export default function (
       const groupsByLocation = groupByLocation(formattedEvents);
 
       let timeUntilNext = null;
+      let weekRace = false;
 
       if (nextEvent) {
         const timeDiff = nextEvent.start.getTime() - now.getTime();
@@ -247,12 +262,15 @@ export default function (
           totalMinutes: Math.floor(timeDiff / (1000 * 60)),
           totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
         };
+
+        weekRace = isWeekRace(timeDiff);
       }
 
       res.json({
         success: true,
         nextEvent,
         timeUntilNext,
+        isWeekRace: weekRace,
         groupsByLocation,
         lastUpdated: new Date().toISOString(),
       });
@@ -278,6 +296,7 @@ export default function (
       const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
 
       let timeUntilNext = null;
+      let weekRace = false;
 
       if (nextEvent) {
         const timeDiff = nextEvent.start.getTime() - now.getTime();
@@ -296,12 +315,15 @@ export default function (
           totalMinutes: Math.floor(timeDiff / (1000 * 60)),
           totalHours: Math.floor(timeDiff / (1000 * 60 * 60)),
         };
+
+        weekRace = isWeekRace(timeDiff);
       }
 
       res.json({
         success: true,
         nextEvent,
         timeUntilNext,
+        isWeekRace: weekRace,
         lastUpdated: new Date().toISOString(),
       });
     } catch (error) {
@@ -356,6 +378,10 @@ export default function (
       {
         name: "Bridge",
         description: "Bridge connection control endpoints",
+      },
+      {
+        name: "Diagnostics",
+        description: "Production CPU profiling endpoints (admin only)",
       },
     ],
     paths: {
@@ -578,6 +604,48 @@ export default function (
             "400": { description: "Bridge client unavailable" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/admin/profile/start": {
+        post: {
+          tags: ["Diagnostics"],
+          summary: "Start a V8 CPU profiling session (admin only)",
+          description:
+            "Starts the in-process V8 CPU profiler via the Node inspector module. Meant to be started/stopped around a short, bounded window during real production load (e.g. 30-60s), not left running.",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Profiling started" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "409": { description: "A profiling session is already running" },
+            "500": { description: "Failed to start the profiler" },
+          },
+        },
+      },
+      "/admin/profile/stop": {
+        post: {
+          tags: ["Diagnostics"],
+          summary: "Stop the running CPU profiling session and save it (admin only)",
+          description:
+            "Stops the profiler started via /admin/profile/start and writes the resulting .cpuprofile file to the server's temp directory. Download it (e.g. via scp) and open it at speedscope.app or in Chrome DevTools.",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "Profile saved",
+              content: {
+                "application/json": {
+                  example: {
+                    success: true,
+                    path: "/tmp/profile-1737158400000.cpuprofile",
+                  },
+                },
+              },
+            },
+            "400": { description: "No profiling session is running" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Failed to stop the profiler" },
           },
         },
       },
@@ -977,6 +1045,63 @@ export default function (
       websocketClient.resetReconnectAttempts();
       res.json({ success: true });
     } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // Starts the V8 CPU profiler in-process (no restart, no exposed --inspect
+  // port). Meant to be started/stopped around a short, bounded window
+  // during real production load, not left running.
+  router.post("/admin/profile/start", requireAdmin, async (req: Request, res: Response) => {
+    if (activeProfileSession) {
+      return res
+        .status(409)
+        .json({ success: false, error: "A profiling session is already running." });
+    }
+
+    try {
+      const session = new inspector.Session();
+      session.connect();
+      await new Promise<void>((resolve, reject) =>
+        session.post("Profiler.enable", (err) => (err ? reject(err) : resolve())),
+      );
+      await new Promise<void>((resolve, reject) =>
+        session.post("Profiler.start", (err) => (err ? reject(err) : resolve())),
+      );
+
+      activeProfileSession = session;
+      res.json({ success: true, message: "CPU profiling started." });
+    } catch (err) {
+      activeProfileSession = null;
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post("/admin/profile/stop", requireAdmin, async (req: Request, res: Response) => {
+    if (!activeProfileSession) {
+      return res
+        .status(400)
+        .json({ success: false, error: "No profiling session is running." });
+    }
+
+    const session = activeProfileSession;
+    activeProfileSession = null;
+
+    try {
+      const { profile } = await new Promise<any>((resolve, reject) =>
+        session.post("Profiler.stop", (err, params) =>
+          err ? reject(err) : resolve(params),
+        ),
+      );
+      session.disconnect();
+
+      const filename = `profile-${Date.now()}.cpuprofile`;
+      const filepath = path.join(os.tmpdir(), filename);
+      fs.writeFileSync(filepath, JSON.stringify(profile));
+
+      res.json({ success: true, path: filepath });
+    } catch (err) {
+      session.disconnect();
       res.status(500).json({ success: false, error: (err as Error).message });
     }
   });
