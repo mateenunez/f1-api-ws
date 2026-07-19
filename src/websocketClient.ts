@@ -13,6 +13,17 @@ class F1APIWebSocketsClient extends EventEmitter {
   private bridgeUrl: string;
   private maxInitAttempts: number = 10;
 
+  // CarData.z/Position.z arrive far faster than any client can usefully
+  // render them. Broadcasting each one immediately means every incoming
+  // bridge message triggers its own O(clients) fan-out. Instead, keep only
+  // the latest sample per feed and flush on a fixed tick, collapsing a burst
+  // of updates into a single broadcast.
+  private readonly THROTTLED_FEEDS = new Set(["CarData.z", "Position.z"]);
+  private readonly BROADCAST_INTERVAL_MS = 250;
+  private pendingThrottledFeeds: Map<string, { data: any; timestamp: string }> =
+    new Map();
+  private throttleTimer: NodeJS.Timeout | null = null;
+
   constructor(
     protected readonly stateProcessor: StateProcessor,
     private translationService: TranslationService,
@@ -185,13 +196,17 @@ class F1APIWebSocketsClient extends EventEmitter {
   private processBridgeFeed(feedName: string, data: any, timestamp: string) {
     this.stateProcessor.processFeed(feedName, data, timestamp);
 
-    const streamingData = {
-      M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
-    };
+    if (this.THROTTLED_FEEDS.has(feedName)) {
+      this.queueThrottledFeed(feedName, data, timestamp);
+    } else {
+      const streamingData = {
+        M: [{ H: "Streaming", M: "feed", A: [feedName, data, timestamp] }],
+      };
 
-    this.addUserCountIfNeeded(streamingData);
-    // Emit plain object; WebSocketServer handles per-client CBOR encoding + filtering
-    this.broadcast(streamingData);
+      this.addUserCountIfNeeded(streamingData);
+      // Emit plain object; WebSocketServer handles per-client CBOR encoding + filtering
+      this.broadcast(streamingData);
+    }
 
     if (feedName === "SessionInfo" && this.isSessionInactive(data)) {
       void this.receivedInactiveSession();
@@ -210,6 +225,36 @@ class F1APIWebSocketsClient extends EventEmitter {
         this.stateProcessor.getPath(),
       );
     }
+  }
+
+  private queueThrottledFeed(feedName: string, data: any, timestamp: string) {
+    // Only the latest sample per feed survives until the next flush tick.
+    this.pendingThrottledFeeds.set(feedName, { data, timestamp });
+
+    if (!this.throttleTimer) {
+      this.throttleTimer = setTimeout(
+        () => this.flushThrottledFeeds(),
+        this.BROADCAST_INTERVAL_MS,
+      );
+    }
+  }
+
+  private flushThrottledFeeds() {
+    this.throttleTimer = null;
+    if (this.pendingThrottledFeeds.size === 0) return;
+
+    const M = Array.from(this.pendingThrottledFeeds.entries()).map(
+      ([feedName, { data, timestamp }]) => ({
+        H: "Streaming",
+        M: "feed",
+        A: [feedName, data, timestamp],
+      }),
+    );
+    this.pendingThrottledFeeds.clear();
+
+    const streamingData = { M };
+    this.addUserCountIfNeeded(streamingData);
+    this.broadcast(streamingData);
   }
 
   async receivedRaceControlMessage(
@@ -329,6 +374,11 @@ class F1APIWebSocketsClient extends EventEmitter {
       clearTimeout(this.reconnectTimeout);
       this.reconnectTimeout = null;
     }
+    if (this.throttleTimer) {
+      clearTimeout(this.throttleTimer);
+      this.throttleTimer = null;
+    }
+    this.pendingThrottledFeeds.clear();
     this.isInitializing = false;
     try {
       if (this.bridgeConnection) {

@@ -206,15 +206,54 @@ class WebSocketTelemetryServer {
     return allowedRoleIds.includes(roleId);
   }
 
-  private sendInitialState(ws: AuthenticatedSocket) {
-    const snapshot = this.stateProcessor.getState();
+  // Full-state snapshot CBOR, cached per access level so a burst of
+  // connecting/reconnecting clients (or repeated get:state requests) within
+  // the same window reuses one encode instead of re-running getState() +
+  // filterStateForUnauthenticated + CBOR encode per client.
+  private cachedFullSnapshotBuffer: Buffer | null = null;
+  private cachedFilteredSnapshotBuffer: Buffer | null = null;
+  private cachedSnapshotAt = 0;
+  // Bounds staleness between broadcasts: ExtrapolatedClock.Remaining is
+  // time-derived in getState() rather than pushed on the wire every tick
+  // (see StateProcessor.clockAnchor), so relying solely on broadcast-driven
+  // invalidation could hand a connecting client a countdown frozen at the
+  // last feed event during a quiet period.
+  private readonly SNAPSHOT_CACHE_TTL_MS = 1000;
 
-    if (snapshot != null) {
-      const payload = ws.hasFullDataAccess
-        ? snapshot
-        : this.filterStateForUnauthenticated(snapshot);
-      ws.send(this.encodeCBOR(payload));
+  private invalidateSnapshotCache() {
+    this.cachedFullSnapshotBuffer = null;
+    this.cachedFilteredSnapshotBuffer = null;
+  }
+
+  private getEncodedSnapshot(hasFullDataAccess: boolean): Buffer | null {
+    if (Date.now() - this.cachedSnapshotAt >= this.SNAPSHOT_CACHE_TTL_MS) {
+      this.invalidateSnapshotCache();
     }
+
+    if (hasFullDataAccess) {
+      if (this.cachedFullSnapshotBuffer === null) {
+        const snapshot = this.stateProcessor.getState();
+        if (snapshot == null) return null;
+        this.cachedFullSnapshotBuffer = this.encodeCBOR(snapshot);
+        this.cachedSnapshotAt = Date.now();
+      }
+      return this.cachedFullSnapshotBuffer;
+    }
+
+    if (this.cachedFilteredSnapshotBuffer === null) {
+      const snapshot = this.stateProcessor.getState();
+      if (snapshot == null) return null;
+      this.cachedFilteredSnapshotBuffer = this.encodeCBOR(
+        this.filterStateForUnauthenticated(snapshot),
+      );
+      this.cachedSnapshotAt = Date.now();
+    }
+    return this.cachedFilteredSnapshotBuffer;
+  }
+
+  private sendInitialState(ws: AuthenticatedSocket) {
+    const buffer = this.getEncodedSnapshot(!!ws.hasFullDataAccess);
+    if (buffer) ws.send(buffer);
   }
 
   constructor(
@@ -234,6 +273,12 @@ class WebSocketTelemetryServer {
     this.wss = new WebSocketServer({
       server,
       clientTracking: true,
+      // Payloads are already compact CBOR, not text, so compression gains
+      // are marginal. Left enabled, `ws` negotiates+deflates per-socket,
+      // synchronously, on every send() — O(clients) CPU work per broadcast
+      // tick that scales directly with connection count (see [metrics] p50/p99
+      // event-loop delay jumping from ~20ms at ~50 clients to 300ms+ at ~225).
+      perMessageDeflate: false,
       verifyClient: async (
         info: { origin: string; secure: boolean; req: AuthenticatedRequest },
         callback: (verified: boolean) => void,
@@ -307,13 +352,8 @@ class WebSocketTelemetryServer {
               break;
 
             case "get:state": {
-              const snapshot = this.stateProcessor.getState();
-              if (snapshot != null) {
-                const payload = ws.hasFullDataAccess
-                  ? snapshot
-                  : this.filterStateForUnauthenticated(snapshot);
-                ws.send(this.encodeCBOR(payload));
-              }
+              const buffer = this.getEncodedSnapshot(!!ws.hasFullDataAccess);
+              if (buffer) ws.send(buffer);
               break;
             }
 
@@ -342,6 +382,10 @@ class WebSocketTelemetryServer {
    * that side of the auth split.
    */
   private handleBroadcast(data: any) {
+    // Any broadcast means the underlying state just changed, so the cached
+    // initial-state snapshot (sendInitialState / get:state) is now stale.
+    this.invalidateSnapshotCache();
+
     if (this.wss.clients.size === 0) return;
 
     let fullEncoded: Buffer | undefined;
