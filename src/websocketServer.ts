@@ -382,10 +382,6 @@ class WebSocketTelemetryServer {
    * that side of the auth split.
    */
   private handleBroadcast(data: any) {
-    // Any broadcast means the underlying state just changed, so the cached
-    // initial-state snapshot (sendInitialState / get:state) is now stale.
-    this.invalidateSnapshotCache();
-
     if (this.wss.clients.size === 0) return;
 
     let fullEncoded: Buffer | undefined;
