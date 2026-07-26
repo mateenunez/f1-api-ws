@@ -137,7 +137,6 @@ async function getEvents() {
   const events = ical.parseICS(calendarData);
 
   const formattedEvents: IcalEvent[] = [];
-  const now = new Date();
 
   for (let eventId in events) {
     const event = events[eventId];
@@ -149,21 +148,19 @@ async function getEvents() {
       continue;
     }
 
-    if (start.getTime() > now.getTime()) {
-      formattedEvents.push({
-        id: eventId,
-        type: getEventType(event.summary || ""),
-        start,
-        end:
-          event.end instanceof Date
-            ? (event.end as Date)
-            : event.end
-              ? (parseIcalDate(event.end) ?? undefined)
-              : undefined,
-        track: getTrack(event.summary || ""),
-        location: event.location || "",
-      });
-    }
+    formattedEvents.push({
+      id: eventId,
+      type: getEventType(event.summary || ""),
+      start,
+      end:
+        event.end instanceof Date
+          ? (event.end as Date)
+          : event.end
+            ? (parseIcalDate(event.end) ?? undefined)
+            : undefined,
+      track: getTrack(event.summary || ""),
+      location: event.location || "",
+    });
   }
   return formattedEvents;
 }
@@ -238,7 +235,9 @@ export default function (
         (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime(),
       );
 
-      const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
+      const nextEvent =
+        formattedEvents.find((e) => e.start.getTime() > now.getTime()) ??
+        null;
 
       const groupsByLocation = groupByLocation(formattedEvents);
 
@@ -293,7 +292,9 @@ export default function (
         (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime(),
       );
 
-      const nextEvent = formattedEvents.length > 0 ? formattedEvents[0] : null;
+      const nextEvent =
+        formattedEvents.find((e) => e.start.getTime() > now.getTime()) ??
+        null;
 
       let timeUntilNext = null;
       let weekRace = false;
