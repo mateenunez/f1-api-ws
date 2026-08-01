@@ -1,5 +1,7 @@
 import bcrypt from "bcrypt";
 import jwt from "jsonwebtoken";
+import crypto from "crypto";
+import { RedisClient } from "./redisClient";
 
 export interface User {
   id: number;
@@ -15,8 +17,21 @@ export interface User {
 export class UserService {
   private readonly SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || "10");
   private readonly JWT_SECRET = process.env.JWT_SECRET;
+  private readonly RESET_TOKEN_TTL_MS = 30 * 60 * 1000;
+  private readonly RESET_COOLDOWN_MS = 2 * 60 * 1000;
+  // Caps on top of the per-request cooldown above: bound sustained abuse of
+  // a single inbox, and bound one IP spraying requests across many inboxes
+  // (the cooldown alone can't stop either — it only throttles rapid-fire
+  // requests against one account).
+  private readonly RESET_ACCOUNT_LIMIT = 5;
+  private readonly RESET_ACCOUNT_WINDOW_S = 24 * 60 * 60;
+  private readonly RESET_IP_LIMIT = 5;
+  private readonly RESET_IP_WINDOW_S = 60 * 60;
 
-  constructor(private pool: any) {}
+  constructor(
+    private pool: any,
+    private redis: RedisClient,
+  ) {}
 
   async register(username: string, email: string, passwordPlain: string) {
     email = email.trim().toLowerCase();
@@ -78,6 +93,74 @@ export class UserService {
     };
 
     return { user, token };
+  }
+
+  /**
+   * Generates a reset token for the given email and stores its hash. Returns
+   * null (no token issued) when the email doesn't match a user, the
+   * account/IP has hit its request cap, or a token was already issued
+   * within the cooldown window — callers should still report generic
+   * success to the client in every case, to avoid leaking which emails are
+   * registered.
+   */
+  async requestPasswordReset(
+    email: string,
+    ip: string,
+  ): Promise<string | null> {
+    email = email.trim().toLowerCase();
+
+    // Counted unconditionally, before the DB lookup, so an attacker probing
+    // for valid emails can't distinguish "rate limited" from "no such user"
+    // by timing, and so a sweep across many made-up addresses still burns
+    // through the IP cap.
+    const [acctCount, ipCount] = await Promise.all([
+      this.redis.incrWithExpiry(
+        `reset:acct:${email}`,
+        this.RESET_ACCOUNT_WINDOW_S,
+      ),
+      this.redis.incrWithExpiry(`reset:ip:${ip}`, this.RESET_IP_WINDOW_S),
+    ]);
+    if (acctCount > this.RESET_ACCOUNT_LIMIT || ipCount > this.RESET_IP_LIMIT) {
+      return null;
+    }
+
+    const userData = await this.findByEmail(email);
+    if (!userData) return null;
+
+    if (userData.reset_token_expires_at) {
+      const issuedAt =
+        new Date(userData.reset_token_expires_at).getTime() -
+        this.RESET_TOKEN_TTL_MS;
+      if (Date.now() - issuedAt < this.RESET_COOLDOWN_MS) return null;
+    }
+
+    const rawToken = crypto.randomBytes(32).toString("hex");
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+    const expiresAt = new Date(Date.now() + this.RESET_TOKEN_TTL_MS);
+
+    await this.pool.query(
+      `UPDATE users SET reset_token_hash = $1, reset_token_expires_at = $2 WHERE id = $3`,
+      [tokenHash, expiresAt, userData.id],
+    );
+
+    return rawToken;
+  }
+
+  async resetPassword(rawToken: string, newPasswordPlain: string): Promise<void> {
+    const tokenHash = crypto.createHash("sha256").update(rawToken).digest("hex");
+
+    const res = await this.pool.query(
+      `SELECT id FROM users WHERE reset_token_hash = $1 AND reset_token_expires_at > NOW()`,
+      [tokenHash],
+    );
+    const userRow = res.rows[0];
+    if (!userRow) throw new Error("INVALID_OR_EXPIRED_TOKEN");
+
+    const hash = await bcrypt.hash(newPasswordPlain, this.SALT_ROUNDS);
+    await this.pool.query(
+      `UPDATE users SET password_hash = $1, reset_token_hash = NULL, reset_token_expires_at = NULL WHERE id = $2`,
+      [hash, userRow.id],
+    );
   }
 
   private generateToken(user: any) {

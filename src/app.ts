@@ -16,6 +16,7 @@ import createRouter from "./api";
 import { UserService } from "./userService";
 import { RoleService } from "./roleService";
 import { ConfigService } from "./configService";
+import { EmailService } from "./emailService";
 dotenv.config();
 
 async function main() {
@@ -25,6 +26,10 @@ async function main() {
 
   app.use(cors());
   app.use(express.json()); // <-- enable JSON body parsing
+  // Trust the single reverse-proxy hop (nginx, see docker-compose.yml) so
+  // req.ip reflects the real client IP from X-Forwarded-For instead of
+  // nginx's own address — required for per-IP rate limiting to work.
+  app.set("trust proxy", 1);
 
   // instantiate services used by the API
   const databaseService = new DatabaseService(); // PostgreSQL database for users.
@@ -76,9 +81,10 @@ async function main() {
     eventEmitter = websocketClient;
   }
 
-  const userService = new UserService(databaseService.getPool());
+  const userService = new UserService(databaseService.getPool(), redisClient);
   const roleService = new RoleService(databaseService.getPool());
   const configService = new ConfigService(databaseService.getPool());
+  const emailService = new EmailService();
 
   // mount API router with injected services
   app.use(
@@ -89,6 +95,7 @@ async function main() {
       userService,
       roleService,
       configService,
+      emailService,
       websocketClient,
     ),
   );

@@ -47,6 +47,7 @@
     "jsdom": "^27.4.0",
     "jsonwebtoken": "^9.0.3",
     "pg": "^8.16.3",
+    "resend": "^6.18.1",
     "swagger-ui-express": "^5.0.1",
     "tough-cookie": "^6.0.0",
     "ws": "^8.18.3"

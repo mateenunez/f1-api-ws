@@ -13,6 +13,7 @@ import { DatabaseService } from "./databaseService";
 import { RoleService } from "./roleService";
 import { UserService } from "./userService";
 import { ConfigService } from "./configService";
+import { EmailService } from "./emailService";
 import { RedisClient } from "./redisClient";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
@@ -216,6 +217,7 @@ export default function (
   userService: UserService,
   roleService: RoleService,
   configService: ConfigService,
+  emailService: EmailService,
   websocketClient: F1APIWebSocketsClient | null,
 ) {
   const router = express.Router();
@@ -520,6 +522,51 @@ export default function (
           },
         },
       },
+      "/config/funding": {
+        get: {
+          tags: ["Settings"],
+          summary: "Get this month's droplet-cost funding status",
+          description:
+            "Public endpoint. Returns the current month's hosting cost and donations received so far, backed by Postgres. costUsd of 0 means funding tracking hasn't been configured yet.",
+          responses: {
+            "200": {
+              description: "Current funding status",
+              content: {
+                "application/json": {
+                  example: { success: true, costUsd: 18, donatedUsd: 6 },
+                },
+              },
+            },
+          },
+        },
+        put: {
+          tags: ["Settings"],
+          summary: "Update this month's cost and/or donations received (admin only)",
+          description:
+            "Persists costUsd and/or donatedUsd to Postgres. Either field may be omitted to leave it unchanged. Donations are tracked manually - there is no automated link to PayPal/Cafecito, so an admin updates donatedUsd as donations come in, and resets both fields at the start of a new billing month.",
+          security: [{ bearerAuth: [] }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    costUsd: { type: "number", example: 18 },
+                    donatedUsd: { type: "number", example: 6 },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Updated funding status" },
+            "400": { description: "Bad request - both fields missing or negative" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
       "/users/register": {
         post: {
           tags: ["Users"],
@@ -592,6 +639,58 @@ export default function (
           responses: {
             "200": { description: "Authenticated" },
             "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/users/forgot-password": {
+        post: {
+          tags: ["Users"],
+          summary: "Request a password reset email",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    email: { type: "string", format: "email" },
+                  },
+                  required: ["email"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Always returns success, regardless of whether the email is registered",
+            },
+            "400": { description: "Bad request" },
+          },
+        },
+      },
+      "/users/reset-password": {
+        post: {
+          tags: ["Users"],
+          summary: "Reset password using a token from the forgot-password email",
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    token: { type: "string" },
+                    password: { type: "string" },
+                  },
+                  required: ["token", "password"],
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Password reset" },
+            "400": { description: "Invalid/expired token or bad request" },
           },
         },
       },
@@ -1032,6 +1131,46 @@ export default function (
     }
   });
 
+  // GET /config/funding - Current month's droplet-cost funding status (public)
+  router.get("/config/funding", async (req: Request, res: Response) => {
+    try {
+      const { costUsd, donatedUsd } = await configService.getFundingStatus();
+      res.json({ success: true, costUsd, donatedUsd });
+    } catch (err) {
+      res.status(500).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  // PUT /config/funding - Update this month's cost and/or donations received (admin only)
+  router.put("/config/funding", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const { costUsd, donatedUsd } = req.body;
+      if (costUsd === undefined && donatedUsd === undefined) {
+        return res.status(400).json({
+          success: false,
+          error: "Provide costUsd and/or donatedUsd",
+        });
+      }
+      if (
+        (costUsd !== undefined && (typeof costUsd !== "number" || isNaN(costUsd) || costUsd < 0)) ||
+        (donatedUsd !== undefined && (typeof donatedUsd !== "number" || isNaN(donatedUsd) || donatedUsd < 0))
+      ) {
+        return res.status(400).json({
+          success: false,
+          error: "costUsd and donatedUsd must be non-negative numbers",
+        });
+      }
+
+      if (costUsd !== undefined) await configService.setFundingCost(costUsd);
+      if (donatedUsd !== undefined) await configService.setFundingDonated(donatedUsd);
+
+      const status = await configService.getFundingStatus();
+      res.json({ success: true, ...status });
+    } catch (err) {
+      res.status(400).json({ success: false, error: (err as Error).message });
+    }
+  });
+
   router.post("/admin/bridge/reset-reconnect", requireAdmin, async (req: Request, res: Response) => {
     try {
       if (!websocketClient) {
@@ -1154,6 +1293,56 @@ export default function (
       res.json({ success: true, user: result.user, token: result.token });
     } catch (err) {
       res.status(401).json({ success: false, error: (err as Error).message });
+    }
+  });
+
+  router.post(
+    "/users/forgot-password",
+    async (req: Request, res: Response) => {
+      const { email } = req.body;
+      if (!email) {
+        return res
+          .status(400)
+          .json({ success: false, error: "VALIDATION_REQUIRED" });
+      }
+      const locale = req.body.locale === "es" ? "es" : "en";
+
+      // Always return a generic success response, whether or not the email
+      // is registered or a token was actually issued, so this endpoint
+      // can't be used to enumerate registered accounts.
+      try {
+        const ip = req.ip ?? req.socket.remoteAddress ?? "unknown";
+        const rawToken = await userService.requestPasswordReset(email, ip);
+        if (rawToken) {
+          const frontendUrl = process.env.FRONTEND_URL || "https://www.f1telemetry.com";
+          const resetUrl = `${frontendUrl}/${locale}/reset-password?token=${rawToken}`;
+          await emailService.sendPasswordResetEmail(email, resetUrl, locale);
+        }
+      } catch (err) {
+        console.error("Error in /users/forgot-password:", err);
+      }
+
+      res.json({ success: true });
+    },
+  );
+
+  router.post("/users/reset-password", async (req: Request, res: Response) => {
+    try {
+      const { token, password } = req.body;
+      if (!token || !password) {
+        return res
+          .status(400)
+          .json({ success: false, error: "VALIDATION_REQUIRED" });
+      }
+      if (password.length < 8) {
+        return res
+          .status(400)
+          .json({ success: false, error: "PASSWORD_TOO_SHORT" });
+      }
+      await userService.resetPassword(token, password);
+      res.json({ success: true });
+    } catch (err) {
+      res.status(400).json({ success: false, error: (err as Error).message });
     }
   });
 

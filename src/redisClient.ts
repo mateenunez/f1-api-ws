@@ -97,6 +97,22 @@ class RedisClient {
     }
   }
 
+  // Fixed-window counter: first call in the window sets the TTL, every call
+  // in-window just increments. Used for rate limiting (e.g. password-reset
+  // request caps) rather than the telemetry save/get above.
+  async incrWithExpiry(key: string, ttlSeconds: number): Promise<number> {
+    try {
+      const count = await this.client.incr(key);
+      if (count === 1) {
+        await this.client.expire(key, ttlSeconds);
+      }
+      return count;
+    } catch (err) {
+      console.error("Error incrementing rate-limit counter:", err);
+      throw err;
+    }
+  }
+
   async quit(): Promise<void> {
     await this.client.quit();
   }

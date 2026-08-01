@@ -45,6 +45,14 @@ export class DatabaseService {
         ON CONFLICT (name) DO NOTHING;
       `);
 
+      // Password recovery: a sha256 hash of the emailed token (not the raw
+      // token itself, so a DB leak alone can't be replayed) plus its expiry.
+      await client.query(`
+        ALTER TABLE users
+        ADD COLUMN IF NOT EXISTS reset_token_hash TEXT,
+        ADD COLUMN IF NOT EXISTS reset_token_expires_at TIMESTAMP WITH TIME ZONE;
+      `);
+
       // Drop legacy chat customization columns: the feature was removed but
       // existing databases (created before this cleanup) may still have
       // them. Dropping the columns doesn't touch existing user rows.
