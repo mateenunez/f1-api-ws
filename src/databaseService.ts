@@ -3,6 +3,7 @@ import bcrypt from "bcrypt";
 
 export class DatabaseService {
   private pool: Pool;
+  readonly ready: Promise<void>;
   private readonly SALT_ROUNDS = Number(process.env.BCRYPT_SALT_ROUNDS || "10");
 
   constructor() {
@@ -13,7 +14,7 @@ export class DatabaseService {
       database: process.env.POSTGRES_DB,
       port: Number(process.env.POSTGRES_PORT),
     });
-    this.initializeSchema();
+    this.ready = this.initializeSchema();
   }
 
   async initializeSchema() {
@@ -94,6 +95,28 @@ export class DatabaseService {
           value TEXT NOT NULL,
           updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
         );
+      `);
+
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS seasons (year INT PRIMARY KEY, is_active BOOLEAN DEFAULT TRUE, created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS grand_prix (id SERIAL PRIMARY KEY, season_year INT NOT NULL REFERENCES seasons(year) ON DELETE CASCADE, round_number INT NOT NULL, name VARCHAR(100) NOT NULL, circuit_key INT, circuit_short_name VARCHAR(50), country_name VARCHAR(50), created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_season_round UNIQUE(season_year, round_number));
+        CREATE TABLE IF NOT EXISTS sessions (id SERIAL PRIMARY KEY, grand_prix_id INT NOT NULL REFERENCES grand_prix(id) ON DELETE CASCADE, session_name VARCHAR(50) NOT NULL, session_type VARCHAR(20) NOT NULL, date_start TIMESTAMP WITH TIME ZONE, date_end TIMESTAMP WITH TIME ZONE, status VARCHAR(20) DEFAULT 'SCHEDULED', created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, CONSTRAINT unique_gp_session UNIQUE(grand_prix_id, session_name));
+        CREATE TABLE IF NOT EXISTS drivers (driver_number INT PRIMARY KEY, name_acronym VARCHAR(5) NOT NULL, full_name VARCHAR(100) NOT NULL, team_name VARCHAR(100), team_colour VARCHAR(10), headshot_url TEXT, is_active BOOLEAN DEFAULT TRUE, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS predictions (id BIGSERIAL PRIMARY KEY, user_id INT NOT NULL REFERENCES users(id) ON DELETE CASCADE, session_id INT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, prediction_data JSONB NOT NULL, submitted_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, points_earned INT DEFAULT 0, evaluated BOOLEAN DEFAULT FALSE, CONSTRAINT unique_user_session_prediction UNIQUE(user_id, session_id));
+        CREATE TABLE IF NOT EXISTS session_results (session_id INT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE, official_results JSONB NOT NULL, evaluated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP);
+        CREATE TABLE IF NOT EXISTS user_season_points (user_id INT REFERENCES users(id) ON DELETE CASCADE, season_year INT REFERENCES seasons(year) ON DELETE CASCADE, total_points INT DEFAULT 0, exact_hits INT DEFAULT 0, updated_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP, PRIMARY KEY (user_id, season_year));
+        ALTER TABLE user_season_points ADD COLUMN IF NOT EXISTS rank INT;
+        DO $$ BEGIN
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_status_valid') THEN
+            ALTER TABLE sessions ADD CONSTRAINT sessions_status_valid CHECK (status IN ('SCHEDULED', 'OPEN', 'LOCKED', 'FINISHED', 'EVALUATED'));
+          END IF;
+          IF NOT EXISTS (SELECT 1 FROM pg_constraint WHERE conname = 'sessions_type_valid') THEN
+            ALTER TABLE sessions ADD CONSTRAINT sessions_type_valid CHECK (session_type IN ('FP', 'QUALIFYING', 'RACE', 'SPRINT'));
+          END IF;
+        END $$;
+        CREATE INDEX IF NOT EXISTS idx_predictions_session ON predictions(session_id);
+        CREATE INDEX IF NOT EXISTS idx_predictions_user ON predictions(user_id);
+        CREATE INDEX IF NOT EXISTS idx_user_season_points_leaderboard ON user_season_points(season_year, total_points DESC, exact_hits DESC);
       `);
 
       // Seed the initial Discord link from env on first boot only; after

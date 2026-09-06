@@ -1,4 +1,5 @@
 import { RedisClient } from "./redisClient";
+import { ProdeService } from "./prodeService";
 
 interface FullState {
   R: any;
@@ -21,8 +22,12 @@ class StateProcessor implements StateProvider {
   // time, so getState() can re-derive "remaining right now" for a client
   // connecting mid-session instead of handing out a stale Remaining value.
   private clockAnchor: ClockAnchor | null = null;
+  private prodeSessionId: number | null = null;
+  private evaluatedProdeSessionId: number | null = null;
+  private evaluatingProdeSessionId: number | null = null;
+  private pendingProdeStatus: any | null = null;
 
-  constructor(private redis: RedisClient) {
+  constructor(private redis: RedisClient, private prodeService?: ProdeService) {
     this.fullState = {
       R: {},
     };
@@ -172,16 +177,94 @@ class StateProcessor implements StateProvider {
     this.fullState = newState;
     this.syncClockAnchor();
     await this.updateRedis();
+    await this.syncProdeState();
   }
 
   async updateStatePremium(newState: FullState) {
     this.fullState.R = newState;
     this.syncClockAnchor();
     await this.updateRedis();
+    await this.syncProdeState();
+  }
+
+  private async syncProdeState() {
+    if (!this.prodeService) return;
+
+    const driverList = this.fullState.R?.DriverList;
+    if (driverList && typeof driverList === "object") {
+      try {
+        await this.prodeService.syncDriversFromState(driverList);
+      } catch (error) {
+        console.error("Prode driver sync failed:", error);
+      }
+    }
+
+    const sessionInfo = this.fullState.R?.SessionInfo;
+    if (sessionInfo && typeof sessionInfo === "object") {
+      try {
+        const sessionId = await this.prodeService.syncSessionFromState(sessionInfo);
+        if (sessionId) {
+          this.prodeSessionId = sessionId;
+          this.handleProdeSessionStatus(sessionInfo);
+        }
+      } catch (error) {
+        console.error("Prode session sync failed:", error);
+      }
+    }
   }
 
   updatePartialState(path: string, data: any) {
     this.deepMerge(this.fullState.R, { [path]: data });
+  }
+
+  getProdeSessionId() {
+    return this.prodeSessionId;
+  }
+
+  getProdeOfficialResults() {
+    const driverNumber = (line: any, key?: string) => {
+      const value = Number(line?.RacingNumber ?? line?.Number ?? line?.driver_number ?? key);
+      return Number.isInteger(value) && value > 0 ? value : undefined;
+    };
+    const lineSources = [
+      this.fullState.R?.TopThree?.Lines,
+      this.fullState.R?.TimingData?.Lines,
+      this.fullState.R?.TimingData?.lines,
+    ];
+    const source = lineSources.find((value) => value && Object.keys(value).length > 0) ?? {};
+    const lines = Object.entries(source).sort(([leftKey, left], [rightKey, right]) =>
+      Number((left as any)?.Position ?? (left as any)?.position ?? leftKey) -
+      Number((right as any)?.Position ?? (right as any)?.position ?? rightKey),
+    );
+    const drivers = lines
+      .slice(0, 3)
+      .map(([key, line]: [string, any]) => driverNumber(line, key))
+      .filter((driver): driver is number => driver !== undefined);
+    const lapSeconds = (value: any): number | undefined => {
+      const text = typeof value === "object" ? value?.Value : value;
+      if (typeof text !== "string") return undefined;
+      const parts = text.split(":").map(Number);
+      if (parts.some((part) => !Number.isFinite(part))) return undefined;
+      return parts.length === 2 ? parts[0] * 60 + parts[1] : parts.length === 1 ? parts[0] : undefined;
+    };
+    const fastest = lines
+      .map(([key, line]) => ({
+        key,
+        line,
+        time: lapSeconds((line as any)?.BestLapTime) ??
+          lapSeconds((line as any)?.FastestLapTime) ??
+          lapSeconds((line as any)?.PersonalBestLapTime),
+      }))
+      .filter((entry): entry is typeof entry & { time: number } => entry.time !== undefined)
+      .sort((left, right) => left.time - right.time)[0];
+    const fastestDriver = fastest ? driverNumber(fastest.line, fastest.key) : drivers[0];
+
+    return {
+      podium: drivers,
+      top3: drivers,
+      pole_driver: drivers[0],
+      fastest_lap_driver: fastestDriver,
+    };
   }
 
   deepMerge(target: any, source: any) {
@@ -252,13 +335,13 @@ class StateProcessor implements StateProvider {
       case "TrackStatus":
         if (this.fullState?.R?.TrackStatus) {
           this.deepMerge(this.fullState.R.TrackStatus, data);
+          this.handleProdeSessionStatus(data);
         }
         break;
 
       case "DriverList":
-        if (this.fullState?.R?.DriverList) {
-          this.deepMerge(this.fullState.R.DriverList, data);
-        }
+        this.deepMerge(this.fullState.R, { DriverList: data });
+        void this.prodeService?.syncDriversFromState(this.fullState.R.DriverList).catch((error) => console.error("Prode driver sync failed:", error));
         break;
 
       case "RaceControlMessages":
@@ -274,18 +357,23 @@ class StateProcessor implements StateProvider {
         break;
 
       case "SessionInfo": {
-        if (this.fullState?.R?.SessionInfo) {
-          const previousPath = this.fullState.R.SessionInfo?.Path;
-          this.deepMerge(this.fullState.R.SessionInfo, data);
-
-          if (
-            typeof data?.Path === "string" &&
-            data.Path &&
-            previousPath &&
-            data.Path !== previousPath
-          ) {
-            this.resetPerSessionFeeds();
+        const previousPath = this.fullState.R.SessionInfo?.Path;
+        this.deepMerge(this.fullState.R, { SessionInfo: data });
+        void this.prodeService?.syncSessionFromState(this.fullState.R.SessionInfo).then((id) => {
+          if (id) {
+            this.prodeSessionId = id;
+            this.handleProdeSessionStatus(this.pendingProdeStatus ?? this.fullState.R.SessionInfo);
+            this.pendingProdeStatus = null;
           }
+        }).catch((error) => console.error("Prode session sync failed:", error));
+
+        if (
+          typeof data?.Path === "string" &&
+          data.Path &&
+          previousPath &&
+          data.Path !== previousPath
+        ) {
+          this.resetPerSessionFeeds();
         }
         break;
       }
@@ -293,6 +381,7 @@ class StateProcessor implements StateProvider {
       case "SessionData":
         if (this.fullState?.R?.SessionData) {
           this.deepMerge(this.fullState.R.SessionData, data);
+          this.handleProdeSessionStatus(data);
         }
         break;
 
@@ -329,6 +418,26 @@ class StateProcessor implements StateProvider {
 
       default:
         console.warn(`Feed "${feedName}" not recognized.`);
+    }
+  }
+
+  private handleProdeSessionStatus(data: any) {
+    const status = String(data?.Status ?? data?.SessionStatus ?? data?.session_status ?? "").toLowerCase();
+    if (!this.prodeService) return;
+    if (!this.prodeSessionId) {
+      if (status) this.pendingProdeStatus = data;
+      return;
+    }
+    if (status === "started" || status === "active") {
+      void this.prodeService.lockSession(this.prodeSessionId).catch((error) => console.error("Prode lock failed:", error));
+    } else if (["ended", "finished", "finalised", "finalized"].includes(status) && this.evaluatedProdeSessionId !== this.prodeSessionId && this.evaluatingProdeSessionId !== this.prodeSessionId) {
+      const sessionId = this.prodeSessionId;
+      this.evaluatingProdeSessionId = sessionId;
+        void this.prodeService.evaluateSession(sessionId, this.getProdeOfficialResults()).then(() => {
+        this.evaluatedProdeSessionId = sessionId;
+      }).catch((error) => console.error("Prode evaluation failed:", error)).finally(() => {
+        if (this.evaluatingProdeSessionId === sessionId) this.evaluatingProdeSessionId = null;
+      });
     }
   }
 }

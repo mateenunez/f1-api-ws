@@ -55,7 +55,7 @@ export class ReplayProvider extends EventEmitter {
     initialStateJson.R.SessionInfo.GmtOffset = "00:00:00";
 
     // Initialize state with the first line
-    this.stateProcessor.updateState(initialStateJson);
+    await this.stateProcessor.updateState(initialStateJson);
 
     const firstMessageTimestamp = Date.parse(lines[1].M[0].A[2]);
     let lastProcessedTimestamp = firstMessageTimestamp;
