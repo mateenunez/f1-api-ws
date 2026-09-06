@@ -17,6 +17,7 @@ import { UserService } from "./userService";
 import { RoleService } from "./roleService";
 import { ConfigService } from "./configService";
 import { EmailService } from "./emailService";
+import { ProdeService } from "./prodeService";
 dotenv.config();
 
 async function main() {
@@ -33,11 +34,13 @@ async function main() {
 
   // instantiate services used by the API
   const databaseService = new DatabaseService(); // PostgreSQL database for users.
+  await databaseService.ready;
   const translationService = new TranslationService(); // Translation service using Gemini API.
   const transcriptionService = new TranscriptionService(); // Transcription service using AssemblyAI API.
   const redisClient = new RedisClient(); // Redis client for storing and retrieving data.
+  const prodeService = new ProdeService(databaseService.getPool());
 
-  const stateProcessor = new StateProcessor(redisClient); // Processes and maintains the state of the current session.
+  const stateProcessor = new StateProcessor(redisClient, prodeService); // Processes and maintains the state of the current session.
 
   let eventEmitter: EventEmitter;
   const argvReplay = process.argv.some((arg) => arg === "--replay");
@@ -87,9 +90,7 @@ async function main() {
   const emailService = new EmailService();
 
   // mount API router with injected services
-  app.use(
-    "/",
-    createRouter(
+  const apiRouter = createRouter(
       databaseService,
       redisClient,
       userService,
@@ -97,8 +98,11 @@ async function main() {
       configService,
       emailService,
       websocketClient,
-    ),
-  );
+      prodeService,
+      stateProcessor,
+    );
+  app.use("/", apiRouter);
+  app.use("/api", apiRouter);
 
   const telemetryServer = new WebSocketTelemetryServer(
     server,

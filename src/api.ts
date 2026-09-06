@@ -18,6 +18,8 @@ import { RedisClient } from "./redisClient";
 import { F1APIWebSocketsClient } from "./websocketClient";
 import swaggerUi from "swagger-ui-express";
 import { createAuthMiddleware } from "./middleware/auth";
+import { ProdeAlreadyVotedError, ProdeLockedError, ProdeService } from "./prodeService";
+import type { StateProcessor } from "./stateProcessor";
 
 interface IcalEvent {
   id: string;
@@ -219,13 +221,15 @@ export default function (
   configService: ConfigService,
   emailService: EmailService,
   websocketClient: F1APIWebSocketsClient | null,
+  prodeService: ProdeService,
+  stateProcessor: StateProcessor,
 ) {
   const router = express.Router();
   const pool = databaseService.getPool();
   const paginationLimit = 50;
   const premiumRoleId = 2;
   const baseRoleId = 1;
-  const { requireAdmin } = createAuthMiddleware(userService);
+  const { requireAuth, requireAdmin, optionalAuth } = createAuthMiddleware(userService);
   let activeProfileSession: inspector.Session | null = null;
 
   async function calendarHandle(req: Request, res: Response) {
@@ -385,6 +389,10 @@ export default function (
       {
         name: "Diagnostics",
         description: "Production CPU profiling endpoints (admin only)",
+      },
+      {
+        name: "Prode Admin",
+        description: "Administrative Prode data and evaluation endpoints",
       },
     ],
     paths: {
@@ -691,6 +699,245 @@ export default function (
           responses: {
             "200": { description: "Password reset" },
             "400": { description: "Invalid/expired token or bad request" },
+          },
+        },
+      },
+      "/prode/leaderboard/season": {
+        get: {
+          tags: ["Prode"],
+          summary: "List the season leaderboard",
+          parameters: [
+            { name: "year", in: "query", required: true, schema: { type: "integer", example: 2026 } },
+            { name: "search", in: "query", schema: { type: "string" } },
+            { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+            { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
+          ],
+          responses: {
+            "200": { description: "Users with evaluated points for the season" },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/prode/leaderboard/gp/{id}": {
+        get: {
+          tags: ["Prode"],
+          summary: "List the Grand Prix leaderboard",
+          parameters: [
+            { name: "id", in: "path", required: true, schema: { type: "integer" } },
+            { name: "search", in: "query", schema: { type: "string" } },
+            { name: "page", in: "query", schema: { type: "integer", minimum: 1, default: 1 } },
+            { name: "pageSize", in: "query", schema: { type: "integer", minimum: 1, maximum: 100, default: 25 } },
+          ],
+          responses: {
+            "200": { description: "Users with points for the Grand Prix" },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/prode/admin/seasons": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "List Prode seasons (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Seasons with Grand Prix counts" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/grand-prix": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "List Prode Grand Prix events (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "year", in: "query", schema: { type: "integer", example: 2026 } }],
+          responses: {
+            "200": { description: "Grand Prix events with session counts" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/sessions": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "List Prode sessions (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            { name: "grandPrixId", in: "query", schema: { type: "integer" } },
+            { name: "year", in: "query", schema: { type: "integer", example: 2026 } },
+          ],
+          responses: {
+            "200": { description: "Sessions with prediction counts" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/sessions/{id}": {
+        patch: {
+          tags: ["Prode Admin"],
+          summary: "Update Prode session metadata (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    sessionName: { type: "string" },
+                    sessionType: { type: "string", enum: ["FP", "QUALIFYING", "RACE", "SPRINT"] },
+                    dateStart: { type: "string", format: "date-time", nullable: true },
+                    dateEnd: { type: "string", format: "date-time", nullable: true },
+                    status: { type: "string", enum: ["SCHEDULED", "OPEN", "LOCKED", "FINISHED", "EVALUATED"] },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Session updated" },
+            "400": { description: "Invalid data or session not found" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/sessions/{id}/lock": {
+        post: {
+          tags: ["Prode Admin"],
+          summary: "Lock voting for a Prode session (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: {
+            "200": { description: "Session locked" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/sessions/{id}/predictions": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "List predictions for a session (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: {
+            "200": { description: "Predictions with user information" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/sessions/{id}/result": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "Get official result for a session (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          responses: {
+            "200": { description: "Official result or null" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+        put: {
+          tags: ["Prode Admin"],
+          summary: "Save or replace an official session result (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { type: "object", required: ["officialResults"], properties: { officialResults: { type: "object", additionalProperties: true } } },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Official result saved" },
+            "400": { description: "Invalid result" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/predictions/{id}": {
+        delete: {
+          tags: ["Prode Admin"],
+          summary: "Delete a Prode prediction (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer", format: "int64" } }],
+          responses: {
+            "200": { description: "Prediction deleted" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "404": { description: "Prediction not found" },
+          },
+        },
+      },
+      "/prode/admin/drivers": {
+        get: {
+          tags: ["Prode Admin"],
+          summary: "List all Prode drivers including inactive drivers (admin only)",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": { description: "Driver list" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/drivers/{number}": {
+        patch: {
+          tags: ["Prode Admin"],
+          summary: "Update Prode driver metadata (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "number", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    nameAcronym: { type: "string" }, fullName: { type: "string" }, teamName: { type: "string", nullable: true },
+                    teamColour: { type: "string", nullable: true }, headshotUrl: { type: "string", nullable: true }, isActive: { type: "boolean" },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Driver updated" },
+            "400": { description: "Invalid data or driver not found" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/prode/admin/evaluate/{id}": {
+        post: {
+          tags: ["Prode Admin"],
+          summary: "Evaluate all predictions for a session (admin only)",
+          security: [{ bearerAuth: [] }],
+          parameters: [{ name: "id", in: "path", required: true, schema: { type: "integer" } }],
+          requestBody: {
+            required: true,
+            content: {
+              "application/json": {
+                schema: { type: "object", properties: { officialResults: { type: "object", additionalProperties: true } } },
+              },
+            },
+          },
+          responses: {
+            "200": { description: "Predictions evaluated in a SQL transaction" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Forbidden - admin role required" },
+            "500": { description: "Evaluation failed" },
           },
         },
       },
@@ -1344,6 +1591,117 @@ export default function (
     } catch (err) {
       res.status(400).json({ success: false, error: (err as Error).message });
     }
+  });
+
+  router.get("/prode/sessions/current", optionalAuth, async (req: Request, res: Response) => {
+    try {
+      const replaySessionId = stateProcessor.getProdeSessionId();
+      const leaderboardContext = await prodeService.getLeaderboardContext(replaySessionId);
+      res.json({
+        success: true,
+        session: await prodeService.getActiveProdeSession(req.user?.id),
+        currentGrandPrixId: leaderboardContext?.grand_prix_id ?? null,
+        currentSeasonYear: leaderboardContext?.season_year ?? null,
+      });
+    }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+
+  router.post("/prode/vote", requireAuth, async (req: Request, res: Response) => {
+    try {
+      const sessionId = Number(req.body?.sessionId);
+      const predictionData = req.body?.predictionData;
+      if (!Number.isInteger(sessionId) || !predictionData || typeof predictionData !== "object" || Array.isArray(predictionData)) return res.status(400).json({ success: false, error: "sessionId and predictionData are required" });
+      res.json({ success: true, prediction: await prodeService.savePrediction(req.user!.id, sessionId, predictionData) });
+    } catch (error) {
+      if (error instanceof ProdeLockedError) return res.status(423).json({ success: false, error: error.message });
+      if (error instanceof ProdeAlreadyVotedError) return res.status(409).json({ success: false, error: error.message });
+      res.status(500).json({ success: false, error: (error as Error).message });
+    }
+  });
+
+  router.get("/prode/my-history", requireAuth, async (req: Request, res: Response) => {
+    try { res.json({ success: true, history: await prodeService.getHistory(req.user!.id) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/leaderboard/season", optionalAuth, async (req: Request, res: Response) => {
+    try { res.json({ success: true, leaderboard: await prodeService.getSeasonLeaderboard(Number(req.query.year) || new Date().getUTCFullYear(), String(req.query.search ?? ""), req.user?.id, Number(req.query.page) || 1, Number(req.query.pageSize) || 25) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/leaderboard/gp/:id", optionalAuth, async (req: Request, res: Response) => {
+    try { res.json({ success: true, leaderboard: await prodeService.getGpLeaderboard(Number(req.params.id), String(req.query.search ?? ""), req.user?.id, Number(req.query.page) || 1, Number(req.query.pageSize) || 25) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/drivers", async (_req: Request, res: Response) => {
+    try { res.json({ success: true, drivers: await prodeService.getDrivers() }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/info", async (_req: Request, res: Response) => {
+    try { res.json({ success: true, info: await prodeService.getInfo() }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.post("/prode/admin/evaluate/:id", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      const officialResults = req.body?.officialResults;
+      await prodeService.evaluateSession(
+        Number(req.params.id),
+        officialResults &&
+        typeof officialResults === "object" &&
+        !Array.isArray(officialResults) &&
+        Object.keys(officialResults).length > 0
+          ? officialResults
+          : stateProcessor.getProdeOfficialResults(),
+      );
+      res.json({ success: true });
+    }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+
+  router.get("/prode/admin/seasons", requireAdmin, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, seasons: await prodeService.getAdminSeasons() }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/admin/grand-prix", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, grandPrix: await prodeService.getAdminGrandPrix(Number(req.query.year) || undefined) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/admin/sessions", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, sessions: await prodeService.getAdminSessions(Number(req.query.grandPrixId) || undefined, Number(req.query.year) || undefined) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.patch("/prode/admin/sessions/:id", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, session: await prodeService.updateAdminSession(Number(req.params.id), req.body) }); }
+    catch (error) { res.status(400).json({ success: false, error: (error as Error).message }); }
+  });
+  router.post("/prode/admin/sessions/:id/lock", requireAdmin, async (req: Request, res: Response) => {
+    try { await prodeService.lockSession(Number(req.params.id)); res.json({ success: true }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/admin/sessions/:id/predictions", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, predictions: await prodeService.getAdminPredictions(Number(req.params.id)) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/admin/sessions/:id/result", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, result: await prodeService.getSessionResult(Number(req.params.id)) }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.put("/prode/admin/sessions/:id/result", requireAdmin, async (req: Request, res: Response) => {
+    try {
+      if (!req.body?.officialResults || typeof req.body.officialResults !== "object") return res.status(400).json({ success: false, error: "officialResults is required" });
+      res.json({ success: true, result: await prodeService.saveSessionResult(Number(req.params.id), req.body.officialResults) });
+    } catch (error) { res.status(400).json({ success: false, error: (error as Error).message }); }
+  });
+  router.delete("/prode/admin/predictions/:id", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, prediction: await prodeService.deletePrediction(Number(req.params.id)) }); }
+    catch (error) { res.status(404).json({ success: false, error: (error as Error).message }); }
+  });
+  router.get("/prode/admin/drivers", requireAdmin, async (_req: Request, res: Response) => {
+    try { res.json({ success: true, drivers: await prodeService.getAdminDrivers() }); }
+    catch (error) { res.status(500).json({ success: false, error: (error as Error).message }); }
+  });
+  router.patch("/prode/admin/drivers/:number", requireAdmin, async (req: Request, res: Response) => {
+    try { res.json({ success: true, driver: await prodeService.updateAdminDriver(Number(req.params.number), req.body) }); }
+    catch (error) { res.status(400).json({ success: false, error: (error as Error).message }); }
   });
 
   // GET /users - Get all registered users (admin only)

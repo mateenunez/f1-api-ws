@@ -17,6 +17,17 @@ declare global {
  * verifying a token requires a DB lookup through it.
  */
 export function createAuthMiddleware(userService: UserService) {
+  async function optionalAuth(req: Request, _res: Response, next: NextFunction) {
+    const token = req.headers.authorization?.split(" ")[1];
+    if (token) {
+      try {
+        const result = await userService.verifyToken(token);
+        if (result) req.user = result.user;
+      } catch { /* Public routes remain available with an invalid token. */ }
+    }
+    next();
+  }
+
   async function requireAuth(req: Request, res: Response, next: NextFunction) {
     const token = req.headers.authorization?.split(" ")[1];
     if (!token) {
@@ -48,5 +59,5 @@ export function createAuthMiddleware(userService: UserService) {
     });
   }
 
-  return { requireAuth, requireAdmin };
+  return { requireAuth, requireAdmin, optionalAuth };
 }
