@@ -233,8 +233,11 @@ export default function (
 
   async function calendarHandle(req: Request, res: Response) {
     try {
-      const formattedEvents = await getEvents();
       const now = new Date();
+      const currentYear = now.getUTCFullYear();
+      const formattedEvents = (await getEvents()).filter(
+        (event) => event.start.getUTCFullYear() === currentYear,
+      );
 
       formattedEvents.sort(
         (a: IcalEvent, b: IcalEvent) => a.start.getTime() - b.start.getTime(),
