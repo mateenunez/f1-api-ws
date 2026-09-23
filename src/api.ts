@@ -172,12 +172,13 @@ function groupByLocation(formattedEvents: IcalEvent[]) {
 
   formattedEvents.forEach((evento) => {
     const { type, track, start, location } = evento;
+    const groupKey = `${track || location || "unknown"}|${location || "unknown"}|${start.getUTCFullYear()}`;
 
-    if (!gruposTemp.has(track)) {
-      gruposTemp.set(track, { track, start, location });
+    if (!gruposTemp.has(groupKey)) {
+      gruposTemp.set(groupKey, { track, start, location });
     }
 
-    const grupo = gruposTemp.get(track)!;
+    const grupo = gruposTemp.get(groupKey)!;
 
     switch (type) {
       case "Practice 1":
