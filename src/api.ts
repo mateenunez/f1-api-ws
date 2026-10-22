@@ -136,7 +136,10 @@ async function getEvents() {
     throw new Error("Calendar fetch returned HTML instead of ICS: " + preview);
   }
 
-  const events = ical.parseICS(calendarData);
+  const unfoldedCalendarData = calendarData
+    .replace(/\r?\n[ \t]/g, "")
+    .replace(/\r\n/g, "\n");
+  const events = ical.parseICS(unfoldedCalendarData);
 
   const formattedEvents: IcalEvent[] = [];
 
