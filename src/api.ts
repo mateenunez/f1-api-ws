@@ -46,6 +46,8 @@ function isSafe(url: string) {
   return url.startsWith("https://livetiming.formula1.com/");
 }
 
+const MAX_RECORDING_BYTES = 50 * 1024 * 1024;
+
 // Practice sessions always open the race weekend on a Friday, so if the
 // next event is 5 days away or less, "now" already falls within that
 // weekend's build-up (e.g. the Monday before a Friday FP1).
@@ -392,6 +394,11 @@ export default function (
         description: "Bridge connection control endpoints",
       },
       {
+        name: "Recordings",
+        description:
+          "F1 session recordings stored in PostgreSQL (authenticated users can list and retrieve; admins can upload)",
+      },
+      {
         name: "Diagnostics",
         description: "Production CPU profiling endpoints (admin only)",
       },
@@ -668,6 +675,150 @@ export default function (
             "400": { description: "Bridge client unavailable" },
             "401": { description: "Unauthorized" },
             "403": { description: "Forbidden - admin role required" },
+          },
+        },
+      },
+      "/admin/recordings": {
+        get: {
+          tags: ["Recordings"],
+          summary: "List all recorded F1 sessions without pagination (authenticated users)",
+          description:
+            "Returns sessionId, sessionName, sessionType, filename, save date, and byte size for every PostgreSQL recording. Older recordings may have null sessionName/sessionType. Use sessionId to retrieve a recording.",
+          security: [{ bearerAuth: [] }],
+          responses: {
+            "200": {
+              description: "Complete recording list, newest first.",
+              content: {
+                "application/json": {
+                  schema: {
+                    type: "object",
+                    properties: {
+                      success: { type: "boolean", example: true },
+                      recordings: {
+                        type: "array",
+                        items: {
+                          type: "object",
+                          properties: {
+                            sessionId: {
+                              type: "string",
+                              example: "2026-77-race-weekend-race",
+                            },
+                            filename: {
+                              type: "string",
+                              example: "2026-77-race-weekend-race.jsonl",
+                            },
+                            sessionName: {
+                              type: "string",
+                              nullable: true,
+                              example: "Race",
+                            },
+                            sessionType: {
+                              type: "string",
+                              nullable: true,
+                              example: "Race",
+                            },
+                            savedAt: {
+                              type: "string",
+                              format: "date-time",
+                            },
+                            sizeBytes: { type: "integer", example: 9158656 },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            "401": { description: "Unauthorized" },
+          },
+        },
+      },
+      "/admin/recordings/{sessionId}": {
+        put: {
+          tags: ["Recordings"],
+          summary: "Upload a recorded F1 session to PostgreSQL (admin only)",
+          description:
+            "Upload the JSONL file as the request body. Enter sessionName and sessionType in the query parameter fields; both are optional. Example: /admin/recordings/14032026?sessionName=Race&sessionType=Race",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionId",
+              in: "path",
+              required: true,
+              schema: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$",
+              },
+            },
+            {
+              name: "sessionName",
+              in: "query",
+              required: false,
+              schema: {
+                type: "string",
+                maxLength: 200,
+                example: "Race",
+              },
+              description:
+                "Session name from SessionInfo.Name (for example Race, Sprint, or Qualifying).",
+            },
+            {
+              name: "sessionType",
+              in: "query",
+              required: false,
+              schema: {
+                type: "string",
+                maxLength: 100,
+                example: "Race",
+              },
+              description:
+                "Session type from SessionInfo.Type (for example Race or Practice).",
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              "application/x-ndjson": {
+                schema: { type: "string", format: "binary" },
+              },
+            },
+          },
+          responses: {
+            "201": { description: "Recording saved in PostgreSQL; retrying the same session ID updates that recording" },
+            "400": { description: "Invalid session ID, metadata, or empty recording" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Admin role required" },
+            "413": { description: "Recording exceeds 50 MB" },
+          },
+        },
+        get: {
+          tags: ["Recordings"],
+          summary: "Retrieve a recorded F1 session by session ID (authenticated users)",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionId",
+              in: "path",
+              required: true,
+              schema: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$",
+                description: "sessionId returned by GET /admin/recordings (filename without .jsonl).",
+              },
+            },
+          ],
+          responses: {
+            "200": {
+              description: "JSON Lines recording",
+              content: {
+                "application/x-ndjson": {
+                  schema: { type: "string", format: "binary" },
+                },
+              },
+            },
+            "401": { description: "Unauthorized" },
+            "404": { description: "Recording not found" },
           },
         },
       },
@@ -961,6 +1112,148 @@ export default function (
   router.get("/calendar", calendarHandle);
 
   router.get("/upcoming", upcomingHandle);
+
+  router.get("/admin/recordings", requireAuth, async (_req, res) => {
+    try {
+      const result = await pool.query(`
+        SELECT
+          session_id AS "sessionId",
+          filename,
+          session_name AS "sessionName",
+          session_type AS "sessionType",
+          saved_at AS "savedAt",
+          octet_length(content) AS "sizeBytes"
+        FROM session_recordings
+        ORDER BY saved_at DESC, session_id ASC
+      `);
+      const recordings = result.rows.map((recording: any) => ({
+        ...recording,
+        savedAt: new Date(recording.savedAt).toISOString(),
+        sizeBytes: Number(recording.sizeBytes),
+      }));
+      res.json({ success: true, recordings });
+    } catch (error) {
+      console.error("[Recordings] Failed to list recordings:", error);
+      res.status(500).json({ success: false, error: "Could not list recordings." });
+    }
+  });
+
+  router.put(
+    "/admin/recordings/:sessionId",
+    requireAdmin,
+    express.raw({ type: "application/x-ndjson", limit: MAX_RECORDING_BYTES }),
+    async (req, res) => {
+      const sessionId = req.params.sessionId;
+      if (
+        typeof sessionId !== "string" ||
+        !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$/.test(sessionId)
+      ) {
+        res.status(400).json({ success: false, error: "Invalid recording session ID." });
+        return;
+      }
+
+      if (!Buffer.isBuffer(req.body) || req.body.length === 0) {
+        res.status(400).json({ success: false, error: "Recording body is required." });
+        return;
+      }
+
+      const filename = `${sessionId}.jsonl`;
+      const sessionName = req.query.sessionName;
+      const sessionType = req.query.sessionType;
+      if (
+        (sessionName !== undefined &&
+          (typeof sessionName !== "string" || sessionName.length > 200)) ||
+        (sessionType !== undefined &&
+          (typeof sessionType !== "string" || sessionType.length > 100))
+      ) {
+        res.status(400).json({
+          success: false,
+          error: "Recording session name or type is invalid.",
+        });
+        return;
+      }
+
+      try {
+        const result = await pool.query(
+          `INSERT INTO session_recordings
+             (session_id, filename, content, session_name, session_type)
+           VALUES ($1, $2, $3, $4, $5)
+           ON CONFLICT (session_id) DO UPDATE
+           SET filename = EXCLUDED.filename,
+               content = EXCLUDED.content,
+               session_name = COALESCE(EXCLUDED.session_name, session_recordings.session_name),
+               session_type = COALESCE(EXCLUDED.session_type, session_recordings.session_type),
+               saved_at = CURRENT_TIMESTAMP
+           RETURNING
+             session_id AS "sessionId",
+             filename,
+             session_name AS "sessionName",
+             session_type AS "sessionType",
+             saved_at AS "savedAt",
+             octet_length(content) AS "sizeBytes"`,
+          [
+            sessionId,
+            filename,
+            req.body,
+            typeof sessionName === "string" ? sessionName : null,
+            typeof sessionType === "string" ? sessionType : null,
+          ],
+        );
+        const recording = result.rows[0];
+        res.status(201).json({
+          success: true,
+          ...recording,
+          savedAt: new Date(recording.savedAt).toISOString(),
+          sizeBytes: Number(recording.sizeBytes),
+        });
+      } catch (error) {
+        console.error(`[Recordings] Failed to save ${sessionId} in PostgreSQL:`, error);
+        res.status(500).json({
+          success: false,
+          error: "Could not save recording in PostgreSQL.",
+        });
+      }
+    },
+  );
+
+  router.get("/admin/recordings/:sessionId", requireAuth, async (req, res) => {
+    const sessionId = req.params.sessionId;
+    if (
+      typeof sessionId !== "string" ||
+      !/^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$/.test(sessionId)
+    ) {
+      res.status(404).json({ success: false, error: "Recording not found." });
+      return;
+    }
+
+    try {
+      const result = await pool.query(
+        `SELECT filename, content
+         FROM session_recordings
+         WHERE session_id = $1`,
+        [sessionId],
+      );
+      const recording = result.rows[0];
+      if (!recording) {
+        res.status(404).json({ success: false, error: "Recording not found." });
+        return;
+      }
+
+      res.setHeader("Content-Type", "application/x-ndjson");
+      res.setHeader(
+        "Content-Disposition",
+        `attachment; filename="${recording.filename}"`,
+      );
+      res.setHeader("Content-Length", recording.content.length);
+      res.send(recording.content);
+    } catch (error) {
+      console.error(`[Recordings] Failed to retrieve ${sessionId} from PostgreSQL:`, error);
+      res.status(500).json({
+        success: false,
+        error: "Could not retrieve recording from PostgreSQL.",
+      });
+    }
+  });
 
   router.get("/download-mp3", async (req: Request, res: Response) => {
     try {

@@ -97,6 +97,28 @@ export class DatabaseService {
         );
       `);
 
+      await client.query(`
+        CREATE TABLE IF NOT EXISTS session_recordings (
+          session_id TEXT PRIMARY KEY,
+          filename VARCHAR(245) UNIQUE NOT NULL,
+          content BYTEA NOT NULL,
+          session_name TEXT,
+          session_type TEXT,
+          saved_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT CURRENT_TIMESTAMP
+        );
+      `);
+
+      await client.query(`
+        ALTER TABLE session_recordings
+          ADD COLUMN IF NOT EXISTS session_name TEXT,
+          ADD COLUMN IF NOT EXISTS session_type TEXT;
+      `);
+
+      await client.query(`
+        CREATE INDEX IF NOT EXISTS session_recordings_saved_at_idx
+        ON session_recordings (saved_at DESC);
+      `);
+
       // Prode feature removed: clean up legacy tables if they exist
       await client.query(`
         DROP TABLE IF EXISTS predictions, session_results, user_season_points, sessions, grand_prix, drivers, seasons CASCADE;
@@ -121,6 +143,7 @@ export class DatabaseService {
     } catch (error) {
       await client.query("ROLLBACK");
       console.error("Error initializing the database:", error);
+      throw error;
     } finally {
       client.release();
     }
