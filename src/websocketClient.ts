@@ -222,7 +222,7 @@ class F1APIWebSocketsClient extends EventEmitter {
         feedName,
         data,
         timestamp,
-        this.stateProcessor.getPath(),
+        this.stateProcessor.getSessionKey(),
       );
     }
   }
@@ -313,7 +313,7 @@ class F1APIWebSocketsClient extends EventEmitter {
     feedName: string,
     data: any,
     timestamp: string,
-    sessionPath: string,
+    sessionKey: string,
   ) {
     try {
       const capturesObj = data?.Captures ?? data;
@@ -327,7 +327,7 @@ class F1APIWebSocketsClient extends EventEmitter {
 
         if (path && this.transcriptionService) {
           try {
-            const fullPath = sessionPath + path;
+            const fullPath = sessionKey + path;
             transcription =
               await this.transcriptionService.transcribe(fullPath);
           } catch (err) {
