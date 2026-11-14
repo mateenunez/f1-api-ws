@@ -71,7 +71,7 @@ class StateProcessor implements StateProvider {
   // an entire race weekend (they're only wiped wholesale when the bridge
   // connection resets on SessionStatus "Inactive", which doesn't fire
   // between e.g. FP1 -> FP2 -> Quali -> Race). Clear them explicitly the
-  // moment SessionInfo.Path shows we've moved to a new session, so a client
+  // moment SessionInfo.Key changes we've moved to a new session, so a client
   // connecting mid-session doesn't see messages/radios left over from the
   // previous one.
   private resetPerSessionFeeds() {
@@ -103,17 +103,14 @@ class StateProcessor implements StateProvider {
     };
   }
 
-  getPath() {
-    return this.fullState.R?.SessionInfo?.Path ?? "";
-  }
-
-  getSessionId() {
-    return this.fullState.R?.SessionInfo?.Meeting?.Key ?? "";
+  getSessionKey(): string {
+    const sessionKey = this.fullState.R?.SessionInfo?.Key;
+    return sessionKey ? String(sessionKey) : "";
   }
 
   async saveToRedis(feedName: string, data: any): Promise<void> {
     try {
-      const sessionId = this.getSessionId();
+      const sessionId = this.getSessionKey();
       if (!sessionId) {
         console.error("No session ID at saveToRedis");
         return;
@@ -131,7 +128,7 @@ class StateProcessor implements StateProvider {
     feedName: string,
   ): Promise<Array<{ text: string | null }>> {
     try {
-      const sessionId = this.getSessionId();
+      const sessionId = this.getSessionKey();
       if (!sessionId) return [];
 
       let items = [];
@@ -272,14 +269,13 @@ class StateProcessor implements StateProvider {
         break;
 
       case "SessionInfo": {
-        const previousPath = this.fullState.R.SessionInfo?.Path;
+        const previousSessionKey = this.fullState.R.SessionInfo?.Key;
         this.deepMerge(this.fullState.R, { SessionInfo: data });
 
         if (
-          typeof data?.Path === "string" &&
-          data.Path &&
-          previousPath &&
-          data.Path !== previousPath
+          data?.Key !== undefined &&
+          previousSessionKey !== undefined &&
+          data.Key !== previousSessionKey
         ) {
           this.resetPerSessionFeeds();
         }
