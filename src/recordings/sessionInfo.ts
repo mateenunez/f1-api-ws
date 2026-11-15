@@ -27,7 +27,8 @@ export interface MeetingInput {
 
 export interface SessionInput {
   sessionKey: number;
-  meetingKey: number;
+  /** null means the session is detached from any meeting. */
+  meetingKey: number | null;
   name: string;
   type: string;
   startDate: string | null;

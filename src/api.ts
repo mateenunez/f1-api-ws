@@ -55,6 +55,7 @@ function isSafe(url: string) {
 }
 
 const MAX_RECORDING_BYTES = 50 * 1024 * 1024;
+const SESSION_INFO_SCAN_BYTES = 16 * 1024 * 1024;
 const RECORDING_SESSION_ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$/;
 
 class InvalidRequestError extends Error {
@@ -204,6 +205,130 @@ function optionalQueryDate(
   return optionalDate(raw, key);
 }
 
+function optionalQueryBoolean(
+  query: Request["query"],
+  key: string,
+): boolean | null {
+  const raw = query[key];
+  if (raw === undefined) return null;
+  if (raw === "true") return true;
+  if (raw === "false") return false;
+  throw new InvalidRequestError(`${key} must be true or false.`);
+}
+
+function queryFlag(query: Request["query"], key: string): boolean {
+  return optionalQueryBoolean(query, key) ?? false;
+}
+
+type ParsedAssociation = {
+  sessionKey: number;
+  hasQualifyingPart: boolean;
+  qualifyingPart: number | null;
+  meeting: MeetingInput | null;
+  session: SessionInput | null;
+};
+
+/**
+ * Parses the JSON body accepted by PUT /admin/recordings/:sessionId/association.
+ * It mirrors the query metadata of the upload endpoint, but only creates a
+ * meeting/session when all the required metadata is present.
+ */
+function parseAssociationBody(body: unknown): ParsedAssociation {
+  const record = asRecord(body);
+  if (!record) {
+    throw new InvalidRequestError("A JSON object body is required.");
+  }
+
+  const sessionKey = positiveInteger(record.sessionKey, "sessionKey");
+  const hasQualifyingPart = hasOwn(record, "qualifyingPart");
+  const qualifyingPart = hasQualifyingPart
+    ? optionalQualifyingPart(record.qualifyingPart)
+    : null;
+
+  const metadataFields = [
+    "meetingKey",
+    "meetingName",
+    "officialName",
+    "location",
+    "countryKey",
+    "countryCode",
+    "countryName",
+    "circuitKey",
+    "circuitShortName",
+    "year",
+    "sessionName",
+    "sessionType",
+    "startDate",
+    "endDate",
+    "status",
+  ];
+  const hasMetadata = metadataFields.some((field) => hasOwn(record, field));
+
+  if (!hasMetadata) {
+    return {
+      sessionKey,
+      hasQualifyingPart,
+      qualifyingPart,
+      meeting: null,
+      session: null,
+    };
+  }
+
+  const meetingKey = positiveInteger(record.meetingKey, "meetingKey");
+  const meetingName = requiredString(record.meetingName, "meetingName", 200);
+  const sessionName = requiredString(record.sessionName, "sessionName", 200);
+  const sessionType = requiredString(record.sessionType, "sessionType", 100);
+  const startDate = optionalDate(record.startDate, "startDate");
+  const endDate = optionalDate(record.endDate, "endDate");
+  const status = hasOwn(record, "status")
+    ? optionalSessionStatus(record.status, "status")
+    : "completed";
+
+  const year =
+    optionalInteger(record.year, "year") ??
+    (startDate
+      ? new Date(startDate).getUTCFullYear()
+      : new Date().getUTCFullYear());
+  if (year < 1900 || year > 2100) {
+    throw new InvalidRequestError("year must be between 1900 and 2100.");
+  }
+
+  const meeting: MeetingInput = {
+    meetingKey,
+    name: meetingName,
+    officialName: optionalString(record.officialName, "officialName", 300),
+    location: optionalString(record.location, "location", 200),
+    countryKey: optionalInteger(record.countryKey, "countryKey"),
+    countryCode: optionalString(record.countryCode, "countryCode", 10),
+    countryName: optionalString(record.countryName, "countryName", 100),
+    circuitKey: optionalInteger(record.circuitKey, "circuitKey"),
+    circuitShortName: optionalString(
+      record.circuitShortName,
+      "circuitShortName",
+      100,
+    ),
+    year,
+  };
+
+  const session: SessionInput = {
+    sessionKey,
+    meetingKey,
+    name: sessionName,
+    type: sessionType,
+    startDate,
+    endDate,
+    status,
+  };
+
+  return {
+    sessionKey,
+    hasQualifyingPart,
+    qualifyingPart,
+    meeting,
+    session,
+  };
+}
+
 type MeetingPatch = {
   name?: string;
   officialName?: string | null;
@@ -217,7 +342,7 @@ type MeetingPatch = {
 };
 
 type SessionPatch = {
-  meetingKey?: number;
+  meetingKey?: number | null;
   name?: string;
   type?: string;
   startDate?: string | null;
@@ -298,7 +423,11 @@ function parseSessionPatch(body: unknown): SessionPatch {
 
   const patch: SessionPatch = {};
   if (hasOwn(record, "meetingKey")) {
-    patch.meetingKey = positiveInteger(record.meetingKey, "meetingKey");
+    if (record.meetingKey === null || record.meetingKey === "") {
+      patch.meetingKey = null;
+    } else {
+      patch.meetingKey = positiveInteger(record.meetingKey, "meetingKey");
+    }
   }
   if (hasOwn(record, "name")) {
     patch.name = requiredString(record.name, "name", 200);
@@ -380,6 +509,7 @@ function mergeSessionPatch(
   if (!existing) {
     if (
       patch.meetingKey === undefined ||
+      patch.meetingKey === null ||
       patch.name === undefined ||
       patch.type === undefined
     ) {
@@ -401,7 +531,11 @@ function mergeSessionPatch(
 
   return {
     sessionKey,
-    meetingKey: patch.meetingKey ?? Number(existing.meetingKey),
+    meetingKey: hasOwn(patch, "meetingKey")
+      ? patch.meetingKey ?? null
+      : existing.meetingKey === null || existing.meetingKey === undefined
+        ? null
+        : Number(existing.meetingKey),
     name: patch.name ?? existing.name,
     type: patch.type ?? existing.type,
     startDate: hasOwn(patch, "startDate")
@@ -487,7 +621,10 @@ function toMeetingResponse(row: any): any {
 function toSessionResponse(row: any): any {
   return {
     sessionKey: Number(row.sessionKey),
-    meetingKey: Number(row.meetingKey),
+    meetingKey:
+      row.meetingKey === null || row.meetingKey === undefined
+        ? null
+        : Number(row.meetingKey),
     meetingName: row.meetingName ?? null,
     name: row.name,
     type: row.type,
@@ -906,7 +1043,7 @@ export default function (
       {
         name: "Recordings",
         description:
-          "F1 session recordings stored in PostgreSQL (authenticated users can list and retrieve; admins can upload)",
+          "F1 session recordings stored in PostgreSQL (authenticated users can list and retrieve; admins can upload, edit, delete, and manage meetings/sessions)",
       },
       {
         name: "Diagnostics",
@@ -1193,7 +1330,7 @@ export default function (
           tags: ["Recordings"],
           summary: "List recorded F1 sessions (authenticated users)",
           description:
-            "Without `view`, returns the flat list (newest first) with sessionId, sessionName, sessionType, meetingKey, sessionKey, qualifyingPart, source, filename, save date, and byte size. With `view=grouped`, returns meetings -> sessions -> recordings (without the BYTEA content) plus an `ungrouped` array; grouped sessions are filtered to `status = completed` for the replay UI.",
+            "Without `view`, returns the flat list (newest first) with sessionId, sessionName, sessionType, meetingKey, sessionKey, qualifyingPart, source, filename, save date, and byte size. With `view=grouped`, returns meetings -> sessions -> recordings (without the BYTEA content), standalone sessions detached from a meeting, plus an `ungrouped` array; grouped views are filtered to `status = completed` for the replay UI.",
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -1206,6 +1343,28 @@ export default function (
               },
               description:
                 "Use `grouped` to get the meeting/session tree used by the replay list.",
+            },
+            {
+              name: "sessionKey",
+              in: "query",
+              required: false,
+              schema: { type: "integer", example: 11399 },
+              description: "Flat list only: filter by session key.",
+            },
+            {
+              name: "meetingKey",
+              in: "query",
+              required: false,
+              schema: { type: "integer", example: 1298 },
+              description: "Flat list only: filter by meeting key.",
+            },
+            {
+              name: "unassigned",
+              in: "query",
+              required: false,
+              schema: { type: "boolean" },
+              description:
+                "Flat list only: true returns recordings without session_key; false returns only associated ones.",
             },
           ],
           responses: {
@@ -1272,6 +1431,12 @@ export default function (
                         type: "array",
                         description:
                           "Only present with view=grouped. Meetings with nested sessions and recordings.",
+                        items: { type: "object" },
+                      },
+                      standaloneSessions: {
+                        type: "array",
+                        description:
+                          "Only present with view=grouped. Sessions detached from a meeting (meetingKey null).",
                         items: { type: "object" },
                       },
                       ungrouped: {
@@ -1445,9 +1610,9 @@ export default function (
         },
         patch: {
           tags: ["Recordings"],
-          summary: "Associate an existing recording with a session (admin only)",
+          summary: "Edit a recording by sessionId (admin only)",
           description:
-            "Updates an already-uploaded recording without sending the JSONL body again. Partial update: omitted fields keep their current value. Provide `sessionKey`, `qualifyingPart`, or both. Send `qualifyingPart: null` to clear it; omit it to keep the current part.",
+            "Partial update of an already-uploaded recording without sending the JSONL body again. Omitted fields keep their current value. Use this endpoint for ungrouped recordings too: sessionName/sessionType can be fixed without a sessionKey. Send `sessionKey: null` to detach the recording from its session, or a sessionKey to associate it. `qualifyingPart: null` clears the part.",
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -1469,9 +1634,17 @@ export default function (
                   properties: {
                     sessionKey: {
                       type: "integer",
+                      nullable: true,
                       example: 11399,
                       description:
-                        "Session to associate. Omit it to keep the current session.",
+                        "Session to associate. Omit it to keep the current session; send null to detach.",
+                    },
+                    meetingKey: {
+                      type: "integer",
+                      nullable: true,
+                      example: 1298,
+                      description:
+                        "Optional consistency check. When sessionKey is set it must match the session's meeting. When the recording is detached, only null is accepted.",
                     },
                     qualifyingPart: {
                       type: "integer",
@@ -1481,13 +1654,30 @@ export default function (
                       description:
                         "Qualifying part. Omit it to keep the current value; send null to clear it.",
                     },
+                    sessionName: {
+                      type: "string",
+                      nullable: true,
+                      example: "Practice 3",
+                      description:
+                        "Recording label. Useful for ungrouped recordings. Send null to clear it.",
+                    },
+                    sessionType: {
+                      type: "string",
+                      nullable: true,
+                      example: "Practice",
+                      description:
+                        "Recording type label. Useful for ungrouped recordings. Send null to clear it.",
+                    },
                   },
                 },
               },
             },
           },
           responses: {
-            "200": { description: "Recording associated with the session" },
+            "200": {
+              description:
+                "Recording updated. The response includes previous and the shaped recording.",
+            },
             "400": { description: "Invalid session ID or body" },
             "401": { description: "Unauthorized" },
             "403": { description: "Admin role required" },
@@ -1522,6 +1712,156 @@ export default function (
             },
             "401": { description: "Unauthorized" },
             "404": { description: "Recording not found" },
+          },
+        },
+        delete: {
+          tags: ["Recordings"],
+          summary: "Delete a recording by sessionId (admin only)",
+          description:
+            "Deletes only the JSONL row. The meeting and session are kept. This operation is irreversible: use PATCH sessionKey=null to detach instead of deleting.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionId",
+              in: "path",
+              required: true,
+              schema: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$",
+              },
+            },
+          ],
+          responses: {
+            "200": { description: "Recording deleted; previous metadata returned" },
+            "400": { description: "Invalid session ID" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Admin role required" },
+            "404": { description: "Recording not found" },
+          },
+        },
+      },
+      "/admin/recordings/{sessionId}/metadata": {
+        get: {
+          tags: ["Recordings"],
+          summary: "Get recording metadata by sessionId (authenticated users)",
+          description:
+            "Returns the flat recording metadata without downloading the JSONL. Use this to inspect an ungrouped recording before editing it.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionId",
+              in: "path",
+              required: true,
+              schema: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$",
+              },
+            },
+          ],
+          responses: {
+            "200": { description: "Recording metadata" },
+            "400": { description: "Invalid session ID" },
+            "401": { description: "Unauthorized" },
+            "404": { description: "Recording not found" },
+          },
+        },
+      },
+      "/admin/recordings/{sessionId}/association": {
+        put: {
+          tags: ["Recordings"],
+          summary:
+            "Create/associate a meeting and session for a recording by sessionId (admin only)",
+          description:
+            "Idempotent PUT. Use { sessionKey } to associate the recording with an existing session, or send full meeting/session metadata to upsert both and associate. With `?fromSessionInfo=true` and an empty body, the API reads R.SessionInfo from the first 16 MB of the stored JSONL and rebuilds the association automatically. This is the recommended way to group old ungrouped recordings without knowing a sessionKey beforehand.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionId",
+              in: "path",
+              required: true,
+              schema: {
+                type: "string",
+                pattern: "^[a-zA-Z0-9][a-zA-Z0-9._-]{0,234}$",
+              },
+            },
+            {
+              name: "fromSessionInfo",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", example: true },
+              description:
+                "Read R.SessionInfo from the stored JSONL instead of requiring a body.",
+            },
+          ],
+          requestBody: {
+            required: false,
+            content: {
+              "application/json": {
+                schema: {
+                  type: "object",
+                  properties: {
+                    sessionKey: { type: "integer", example: 11399 },
+                    qualifyingPart: {
+                      type: "integer",
+                      nullable: true,
+                      enum: [1, 2, 3],
+                      example: 1,
+                    },
+                    meetingKey: { type: "integer", example: 1298 },
+                    meetingName: {
+                      type: "string",
+                      example: "Mexico City Grand Prix",
+                    },
+                    officialName: { type: "string", nullable: true },
+                    location: { type: "string", nullable: true },
+                    countryKey: { type: "integer", nullable: true },
+                    countryCode: { type: "string", nullable: true },
+                    countryName: { type: "string", nullable: true },
+                    circuitKey: { type: "integer", nullable: true },
+                    circuitShortName: { type: "string", nullable: true },
+                    year: { type: "integer", example: 2026 },
+                    sessionName: { type: "string", example: "Practice 3" },
+                    sessionType: { type: "string", example: "Practice" },
+                    startDate: {
+                      type: "string",
+                      format: "date-time",
+                      nullable: true,
+                    },
+                    endDate: {
+                      type: "string",
+                      format: "date-time",
+                      nullable: true,
+                    },
+                    status: {
+                      type: "string",
+                      enum: ["scheduled", "started", "completed", "aborted"],
+                      example: "completed",
+                    },
+                  },
+                  example: {
+                    sessionKey: 11399,
+                    qualifyingPart: 1,
+                    meetingKey: 1298,
+                    meetingName: "Mexico City Grand Prix",
+                    year: 2026,
+                    sessionName: "Practice 3",
+                    sessionType: "Practice",
+                    status: "completed",
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            "200": {
+              description:
+                "Recording associated; response includes recording, session, meeting and previous.",
+            },
+            "400": { description: "Invalid session ID or association body" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Admin role required" },
+            "404": { description: "Recording or session not found" },
+            "409": { description: "Another recording already uses this session/part" },
           },
         },
       },
@@ -1629,6 +1969,46 @@ export default function (
             "403": { description: "Admin role required" },
           },
         },
+        delete: {
+          tags: ["Recordings"],
+          summary: "Delete a meeting (admin only)",
+          description:
+            "By default (`cascade=false`) the meeting is removed but its sessions are detached (`meetingKey: null`) and its recordings are kept. Use `cascade=true` to delete the meeting, its sessions and their recordings. `dryRun=true` returns the impact without deleting.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "meetingKey",
+              in: "path",
+              required: true,
+              schema: { type: "integer", example: 1298 },
+            },
+            {
+              name: "cascade",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description:
+                "true deletes sessions and recordings; false (default) detaches them.",
+            },
+            {
+              name: "dryRun",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description: "Preview the affected counts without deleting.",
+            },
+          ],
+          responses: {
+            "200": {
+              description:
+                "Meeting deleted or detached; response includes affected counts and previous snapshot.",
+            },
+            "400": { description: "Invalid meeting key or query flags" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Admin role required" },
+            "404": { description: "Meeting not found" },
+          },
+        },
       },
       "/admin/sessions": {
         get: {
@@ -1656,6 +2036,14 @@ export default function (
                 type: "string",
                 enum: ["scheduled", "started", "completed", "aborted"],
               },
+            },
+            {
+              name: "unassigned",
+              in: "query",
+              required: false,
+              schema: { type: "boolean" },
+              description:
+                "true returns only sessions without meeting (standalone); false only sessions with meeting.",
             },
           ],
           responses: {
@@ -1690,7 +2078,7 @@ export default function (
           tags: ["Recordings"],
           summary: "Create or update a session (admin only)",
           description:
-            "Partial update: only the fields present in the body are written. Omitted fields keep their current value, so you can fix one field without erasing the rest. `meetingKey`, `name` and `type` are required only when creating a new session. Send `null` to clear an optional field.",
+            "Partial update: only the fields present in the body are written. Omitted fields keep their current value, so you can fix one field without erasing the rest. `meetingKey`, `name` and `type` are required only when creating a new session. Send `meetingKey: null` to detach the session from its meeting. Send `null` in any other optional field to clear it.",
           security: [{ bearerAuth: [] }],
           parameters: [
             {
@@ -1707,7 +2095,13 @@ export default function (
                 schema: {
                   type: "object",
                   properties: {
-                    meetingKey: { type: "integer", example: 1298 },
+                    meetingKey: {
+                      type: "integer",
+                      nullable: true,
+                      example: 1298,
+                      description:
+                        "Meeting to attach this session to. Send null to leave it standalone.",
+                    },
                     name: { type: "string", example: "Practice 3" },
                     type: { type: "string", example: "Practice" },
                     startDate: {
@@ -1730,12 +2124,55 @@ export default function (
             },
           },
           responses: {
-            "200": { description: "Session saved" },
+            "200": {
+              description:
+                "Session saved. Response includes previous and the current session.",
+            },
             "400": {
               description: "Invalid session payload or meetingKey missing",
             },
             "401": { description: "Unauthorized" },
             "403": { description: "Admin role required" },
+          },
+        },
+        delete: {
+          tags: ["Recordings"],
+          summary: "Delete a session (admin only)",
+          description:
+            "By default (`cascade=false`) the session is removed and its recordings are detached (sessionKey/meetingKey null, labels preserved). Use `cascade=true` to delete the recordings too. `dryRun=true` returns the impact without deleting.",
+          security: [{ bearerAuth: [] }],
+          parameters: [
+            {
+              name: "sessionKey",
+              in: "path",
+              required: true,
+              schema: { type: "integer", example: 11399 },
+            },
+            {
+              name: "cascade",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description:
+                "true deletes the recordings; false (default) detaches them.",
+            },
+            {
+              name: "dryRun",
+              in: "query",
+              required: false,
+              schema: { type: "boolean", default: false },
+              description: "Preview the affected recording count.",
+            },
+          ],
+          responses: {
+            "200": {
+              description:
+                "Session deleted; response includes affected recordings and previous snapshot.",
+            },
+            "400": { description: "Invalid session key or query flags" },
+            "401": { description: "Unauthorized" },
+            "403": { description: "Admin role required" },
+            "404": { description: "Session not found" },
           },
         },
       },
@@ -2082,7 +2519,11 @@ export default function (
       await databaseService.upsertMeeting(meeting);
       const saved = await databaseService.getMeeting(meetingKey);
       if (!saved) throw new Error("Meeting was not persisted.");
-      res.json({ success: true, meeting: toMeetingResponse(saved) });
+      res.json({
+        success: true,
+        previous: existing ? toMeetingResponse(existing) : null,
+        meeting: toMeetingResponse(saved),
+      });
     } catch (error) {
       if (error instanceof InvalidRequestError) {
         res.status(400).json({ success: false, error: error.message });
@@ -2093,10 +2534,94 @@ export default function (
     }
   });
 
+  router.delete(
+    "/admin/meetings/:meetingKey",
+    requireAdmin,
+    async (req, res) => {
+      const meetingKey = toSafeInteger(req.params.meetingKey);
+      if (meetingKey === null || meetingKey <= 0) {
+        res.status(400).json({ success: false, error: "Invalid meeting key." });
+        return;
+      }
+
+      try {
+        const cascade = queryFlag(req.query, "cascade");
+        const dryRun = queryFlag(req.query, "dryRun");
+        const existing = await databaseService.getMeeting(meetingKey);
+        if (!existing) {
+          res.status(404).json({ success: false, error: "Meeting not found." });
+          return;
+        }
+
+        if (dryRun) {
+          res.json({
+            success: true,
+            deleted: false,
+            mode: cascade ? "cascade" : "detach",
+            wouldAffect: {
+              sessions: Number(existing.sessionCount ?? 0),
+              recordings: Number(existing.recordingCount ?? 0),
+            },
+            previous: toMeetingResponse(existing),
+          });
+          return;
+        }
+
+        const result = await databaseService.deleteMeeting(meetingKey, {
+          cascade,
+        });
+        if (result.status === "not-found") {
+          res.status(404).json({ success: false, error: "Meeting not found." });
+          return;
+        }
+
+        const affectedRecordings = result.recordings?.length ?? 0;
+        res.json({
+          success: true,
+          deleted: true,
+          mode: cascade ? "cascade" : "detach",
+          affected: {
+            sessions: result.sessions?.length ?? 0,
+            recordings: affectedRecordings,
+          },
+          detachedSessions: cascade
+            ? []
+            : (result.sessions ?? []).map((row: any) => ({
+                ...toSessionResponse(row),
+                meetingKey: null,
+                meetingName: null,
+              })),
+          deletedRecordings: cascade
+            ? (result.recordings ?? []).map(toFlatRecording)
+            : [],
+          previous: {
+            meeting: toMeetingResponse(result.meeting),
+            sessions: (result.sessions ?? []).map(toSessionResponse),
+          },
+        });
+      } catch (error) {
+        if (error instanceof InvalidRequestError) {
+          res.status(400).json({ success: false, error: error.message });
+          return;
+        }
+        console.error(`[Meetings] Failed to delete ${meetingKey}:`, error);
+        res
+          .status(500)
+          .json({ success: false, error: "Could not delete meeting." });
+      }
+    },
+  );
+
   router.get("/admin/sessions", requireAuth, async (req, res) => {
     try {
       const meetingKey = optionalQueryInteger(req.query, "meetingKey");
       const year = optionalQueryInteger(req.query, "year");
+      const unassigned = optionalQueryBoolean(req.query, "unassigned");
+      if (meetingKey !== null && unassigned === true) {
+        throw new InvalidRequestError(
+          "meetingKey cannot be combined with unassigned=true.",
+        );
+      }
       const statusRaw = req.query.status;
       let status: SessionStatus | null = null;
       if (statusRaw !== undefined) {
@@ -2112,6 +2637,7 @@ export default function (
         meetingKey,
         year,
         status,
+        unassigned,
       });
       res.json({
         success: true,
@@ -2164,19 +2690,25 @@ export default function (
       const patch = parseSessionPatch(req.body);
       const existing = await databaseService.getSession(sessionKey);
       const session = mergeSessionPatch(sessionKey, patch, existing);
-      const meeting = await databaseService.getMeeting(session.meetingKey);
-      if (!meeting) {
-        res.status(400).json({
-          success: false,
-          error: "meetingKey does not exist.",
-        });
-        return;
+      if (session.meetingKey !== null) {
+        const meeting = await databaseService.getMeeting(session.meetingKey);
+        if (!meeting) {
+          res.status(400).json({
+            success: false,
+            error: "meetingKey does not exist.",
+          });
+          return;
+        }
       }
 
       await databaseService.upsertSession(session);
       const saved = await databaseService.getSession(sessionKey);
       if (!saved) throw new Error("Session was not persisted.");
-      res.json({ success: true, session: toSessionResponse(saved) });
+      res.json({
+        success: true,
+        previous: existing ? toSessionResponse(existing) : null,
+        session: toSessionResponse(saved),
+      });
     } catch (error) {
       if (error instanceof InvalidRequestError) {
         res.status(400).json({ success: false, error: error.message });
@@ -2186,6 +2718,78 @@ export default function (
       res.status(500).json({ success: false, error: "Could not save session." });
     }
   });
+
+  router.delete(
+    "/admin/sessions/:sessionKey",
+    requireAdmin,
+    async (req, res) => {
+      const sessionKey = toSafeInteger(req.params.sessionKey);
+      if (sessionKey === null || sessionKey <= 0) {
+        res.status(400).json({ success: false, error: "Invalid session key." });
+        return;
+      }
+
+      try {
+        const cascade = queryFlag(req.query, "cascade");
+        const dryRun = queryFlag(req.query, "dryRun");
+        const existing = await databaseService.getSession(sessionKey);
+        if (!existing) {
+          res.status(404).json({ success: false, error: "Session not found." });
+          return;
+        }
+
+        if (dryRun) {
+          res.json({
+            success: true,
+            deleted: false,
+            mode: cascade ? "cascade" : "detach",
+            wouldAffect: {
+              recordings: Number(existing.recordingCount ?? 0),
+            },
+            previous: toSessionResponse(existing),
+          });
+          return;
+        }
+
+        const result = await databaseService.deleteSession(sessionKey, {
+          cascade,
+        });
+        if (result.status === "not-found") {
+          res.status(404).json({ success: false, error: "Session not found." });
+          return;
+        }
+
+        res.json({
+          success: true,
+          deleted: true,
+          mode: cascade ? "cascade" : "detach",
+          affected: {
+            recordings: result.recordings?.length ?? 0,
+          },
+          detachedRecordings: cascade
+            ? []
+            : (result.recordings ?? []).map((row: any) => ({
+                ...toFlatRecording(row),
+                sessionKey: null,
+                meetingKey: null,
+              })),
+          deletedRecordings: cascade
+            ? (result.recordings ?? []).map(toFlatRecording)
+            : [],
+          previous: toSessionResponse(result.session),
+        });
+      } catch (error) {
+        if (error instanceof InvalidRequestError) {
+          res.status(400).json({ success: false, error: error.message });
+          return;
+        }
+        console.error(`[Sessions] Failed to delete ${sessionKey}:`, error);
+        res
+          .status(500)
+          .json({ success: false, error: "Could not delete session." });
+      }
+    },
+  );
 
   router.get("/admin/recordings", requireAuth, async (req, res) => {
     const view = req.query.view;
@@ -2212,8 +2816,33 @@ export default function (
     }
 
     try {
-      const result = await pool.query(`
-        SELECT
+      const sessionKey = optionalQueryInteger(req.query, "sessionKey");
+      const meetingKey = optionalQueryInteger(req.query, "meetingKey");
+      const unassigned = optionalQueryBoolean(req.query, "unassigned");
+      if (sessionKey !== null && unassigned === true) {
+        throw new InvalidRequestError(
+          "sessionKey cannot be combined with unassigned=true.",
+        );
+      }
+
+      const conditions: string[] = [];
+      const values: any[] = [];
+      if (sessionKey !== null) {
+        values.push(sessionKey);
+        conditions.push(`session_key = $${values.length}`);
+      }
+      if (meetingKey !== null) {
+        values.push(meetingKey);
+        conditions.push(`meeting_key = $${values.length}`);
+      }
+      if (unassigned !== null) {
+        conditions.push(
+          unassigned ? "session_key IS NULL" : "session_key IS NOT NULL",
+        );
+      }
+
+      const result = await pool.query(
+        `SELECT
           session_id AS "sessionId",
           filename,
           session_name AS "sessionName",
@@ -2225,11 +2854,17 @@ export default function (
           saved_at AS "savedAt",
           octet_length(content) AS "sizeBytes"
         FROM session_recordings
-        ORDER BY saved_at DESC, session_id ASC
-      `);
+        ${conditions.length ? `WHERE ${conditions.join(" AND ")}` : ""}
+        ORDER BY saved_at DESC, session_id ASC`,
+        values,
+      );
       const recordings = result.rows.map(toFlatRecording);
       res.json({ success: true, recordings });
     } catch (error) {
+      if (error instanceof InvalidRequestError) {
+        res.status(400).json({ success: false, error: error.message });
+        return;
+      }
       console.error("[Recordings] Failed to list recordings:", error);
       res.status(500).json({ success: false, error: "Could not list recordings." });
     }
@@ -2266,7 +2901,7 @@ export default function (
       }
 
       let resolved: {
-        meetingKey: number;
+        meetingKey: number | null;
         sessionKey: number;
         sessionName: string;
         sessionType: string;
@@ -2332,7 +2967,10 @@ export default function (
             return;
           }
           resolved = {
-            meetingKey: Number(session.meetingKey),
+            meetingKey:
+              session.meetingKey === null || session.meetingKey === undefined
+                ? null
+                : Number(session.meetingKey),
             sessionKey: Number(session.sessionKey),
             sessionName: session.name,
             sessionType: session.type,
@@ -2433,8 +3071,14 @@ export default function (
 
     let hasSessionKey = false;
     let hasQualifyingPart = false;
+    let hasSessionName = false;
+    let hasSessionType = false;
+    let hasMeetingKey = false;
     let requestedSessionKey: number | null = null;
     let requestedQualifyingPart: number | null = null;
+    let requestedSessionName: string | null = null;
+    let requestedSessionType: string | null = null;
+    let requestedMeetingKey: number | null = null;
 
     try {
       const body = asRecord(req.body);
@@ -2443,16 +3087,48 @@ export default function (
       }
       hasSessionKey = hasOwn(body, "sessionKey");
       hasQualifyingPart = hasOwn(body, "qualifyingPart");
-      if (!hasSessionKey && !hasQualifyingPart) {
+      hasSessionName = hasOwn(body, "sessionName");
+      hasSessionType = hasOwn(body, "sessionType");
+      hasMeetingKey = hasOwn(body, "meetingKey");
+      if (
+        !hasSessionKey &&
+        !hasQualifyingPart &&
+        !hasSessionName &&
+        !hasSessionType &&
+        !hasMeetingKey
+      ) {
         throw new InvalidRequestError(
-          "Provide sessionKey and/or qualifyingPart.",
+          "Provide at least one of sessionKey, meetingKey, qualifyingPart, sessionName or sessionType.",
         );
       }
       if (hasSessionKey) {
-        requestedSessionKey = positiveInteger(body.sessionKey, "sessionKey");
+        requestedSessionKey =
+          body.sessionKey === null || body.sessionKey === ""
+            ? null
+            : positiveInteger(body.sessionKey, "sessionKey");
       }
       if (hasQualifyingPart) {
         requestedQualifyingPart = optionalQualifyingPart(body.qualifyingPart);
+      }
+      if (hasSessionName) {
+        requestedSessionName = optionalString(
+          body.sessionName,
+          "sessionName",
+          200,
+        );
+      }
+      if (hasSessionType) {
+        requestedSessionType = optionalString(
+          body.sessionType,
+          "sessionType",
+          100,
+        );
+      }
+      if (hasMeetingKey) {
+        requestedMeetingKey =
+          body.meetingKey === null || body.meetingKey === ""
+            ? null
+            : positiveInteger(body.meetingKey, "meetingKey");
       }
     } catch (error) {
       if (error instanceof InvalidRequestError) {
@@ -2463,6 +3139,7 @@ export default function (
     }
 
     let finalSessionKey: number | null = null;
+    let finalMeetingKey: number | null = null;
     let finalQualifyingPart: number | null = null;
 
     try {
@@ -2473,10 +3150,7 @@ export default function (
       }
 
       let session: any | null = null;
-      if (hasSessionKey) {
-        if (requestedSessionKey === null) {
-          throw new Error("sessionKey was not parsed.");
-        }
+      if (hasSessionKey && requestedSessionKey !== null) {
         session = await databaseService.getSession(requestedSessionKey);
         if (!session) {
           res.status(404).json({ success: false, error: "Session not found." });
@@ -2489,6 +3163,45 @@ export default function (
         : existing.sessionKey === null || existing.sessionKey === undefined
           ? null
           : Number(existing.sessionKey);
+
+      if (hasSessionKey) {
+        finalMeetingKey =
+          finalSessionKey === null
+            ? null
+            : session?.meetingKey === null || session?.meetingKey === undefined
+              ? null
+              : Number(session.meetingKey);
+      } else {
+        finalMeetingKey =
+          existing.meetingKey === null || existing.meetingKey === undefined
+            ? null
+            : Number(existing.meetingKey);
+      }
+
+      if (hasMeetingKey) {
+        if (finalSessionKey === null) {
+          if (requestedMeetingKey !== null) {
+            throw new InvalidRequestError(
+              "meetingKey cannot be set while the recording is detached from a session.",
+            );
+          }
+          finalMeetingKey = null;
+        } else {
+          if (requestedMeetingKey === null) {
+            throw new InvalidRequestError(
+              "meetingKey must match the session's meeting; it cannot be null while sessionKey is set.",
+            );
+          }
+          const expectedMeetingKey =
+            finalMeetingKey === null ? null : Number(finalMeetingKey);
+          if (requestedMeetingKey !== expectedMeetingKey) {
+            throw new InvalidRequestError(
+              "meetingKey must match the meeting of the associated session.",
+            );
+          }
+        }
+      }
+
       finalQualifyingPart = hasQualifyingPart
         ? requestedQualifyingPart
         : existing.qualifyingPart === null ||
@@ -2500,13 +3213,13 @@ export default function (
         sessionId,
         {
           sessionKey: finalSessionKey,
-          meetingKey: hasSessionKey
-            ? Number(session!.meetingKey)
-            : existing.meetingKey === null || existing.meetingKey === undefined
-              ? null
-              : Number(existing.meetingKey),
-          sessionName: existing.sessionName ?? (session ? session.name : null),
-          sessionType: existing.sessionType ?? (session ? session.type : null),
+          meetingKey: finalMeetingKey,
+          sessionName: hasSessionName
+            ? requestedSessionName
+            : existing.sessionName ?? (session ? session.name : null),
+          sessionType: hasSessionType
+            ? requestedSessionType
+            : existing.sessionType ?? (session ? session.type : null),
           qualifyingPart: finalQualifyingPart,
         },
       );
@@ -2515,8 +3228,17 @@ export default function (
         return;
       }
 
-      res.json({ success: true, recording: toFlatRecording(recording) });
+      res.json({
+        success: true,
+        previous: toFlatRecording(existing),
+        recording: toFlatRecording(recording),
+        session: session ? toSessionResponse(session) : null,
+      });
     } catch (error) {
+      if (error instanceof InvalidRequestError) {
+        res.status(400).json({ success: false, error: error.message });
+        return;
+      }
       if (isUniqueViolation(error)) {
         const existingSessionId =
           finalSessionKey === null
@@ -2533,13 +3255,209 @@ export default function (
         });
         return;
       }
-      console.error(`[Recordings] Failed to associate ${sessionId}:`, error);
+      console.error(`[Recordings] Failed to patch ${sessionId}:`, error);
       res.status(500).json({
         success: false,
-        error: "Could not associate recording.",
+        error: "Could not update recording.",
       });
     }
   });
+
+  router.get(
+    "/admin/recordings/:sessionId/metadata",
+    requireAuth,
+    async (req, res) => {
+      const sessionId = req.params.sessionId;
+      if (
+        typeof sessionId !== "string" ||
+        !RECORDING_SESSION_ID_PATTERN.test(sessionId)
+      ) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid recording session ID.",
+        });
+        return;
+      }
+
+      try {
+        const recording = await databaseService.getRecordingMetadata(sessionId);
+        if (!recording) {
+          res
+            .status(404)
+            .json({ success: false, error: "Recording not found." });
+          return;
+        }
+        res.json({ success: true, recording: toFlatRecording(recording) });
+      } catch (error) {
+        console.error(`[Recordings] Failed to get ${sessionId}:`, error);
+        res.status(500).json({
+          success: false,
+          error: "Could not get recording metadata.",
+        });
+      }
+    },
+  );
+
+  router.put(
+    "/admin/recordings/:sessionId/association",
+    requireAdmin,
+    async (req, res) => {
+      const sessionId = req.params.sessionId;
+      if (
+        typeof sessionId !== "string" ||
+        !RECORDING_SESSION_ID_PATTERN.test(sessionId)
+      ) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid recording session ID.",
+        });
+        return;
+      }
+
+      let parsed: ParsedAssociation;
+      try {
+        const fromSessionInfo = queryFlag(req.query, "fromSessionInfo");
+        if (fromSessionInfo) {
+          const prefix = await databaseService.getRecordingPrefix(
+            sessionId,
+            SESSION_INFO_SCAN_BYTES,
+          );
+          if (!prefix) {
+            res
+              .status(404)
+              .json({ success: false, error: "Recording not found." });
+            return;
+          }
+          const info = extractSessionInfoFromRecording(prefix);
+          if (!info) {
+            res.status(400).json({
+              success: false,
+              error:
+                "The recording does not contain R.SessionInfo in its first records.",
+            });
+            return;
+          }
+          const body = asRecord(req.body) ?? {};
+          const hasQualifyingPart = hasOwn(body, "qualifyingPart");
+          parsed = {
+            sessionKey: info.session.sessionKey,
+            hasQualifyingPart,
+            qualifyingPart: hasQualifyingPart
+              ? optionalQualifyingPart(body.qualifyingPart)
+              : null,
+            meeting: info.meeting,
+            session: info.session,
+          };
+        } else {
+          parsed = parseAssociationBody(req.body);
+        }
+      } catch (error) {
+        if (error instanceof InvalidRequestError) {
+          res.status(400).json({ success: false, error: error.message });
+          return;
+        }
+        console.error(`[Recordings] Failed to parse ${sessionId}:`, error);
+        res.status(500).json({
+          success: false,
+          error: "Could not parse the association payload.",
+        });
+        return;
+      }
+
+      try {
+        const previous = await databaseService.getRecordingMetadata(sessionId);
+        if (!previous) {
+          res
+            .status(404)
+            .json({ success: false, error: "Recording not found." });
+          return;
+        }
+
+        const result = await databaseService.linkRecording(sessionId, parsed);
+        if (result.status === "recording-not-found") {
+          res
+            .status(404)
+            .json({ success: false, error: "Recording not found." });
+          return;
+        }
+        if (result.status === "session-not-found") {
+          res.status(404).json({
+            success: false,
+            error:
+              "Session not found. Send full meeting and session metadata to create it.",
+          });
+          return;
+        }
+
+        res.json({
+          success: true,
+          previous: toFlatRecording(previous),
+          recording: toFlatRecording(result.recording),
+          session: result.session ? toSessionResponse(result.session) : null,
+          meeting: result.meeting ? toMeetingResponse(result.meeting) : null,
+        });
+      } catch (error) {
+        if (isUniqueViolation(error)) {
+          const existingSessionId =
+            await databaseService.findRecordingIdBySessionPart(
+              parsed.sessionKey,
+              parsed.qualifyingPart,
+            );
+          res.status(409).json({
+            success: false,
+            error:
+              "A recording already exists for this session and qualifying part.",
+            existingSessionId,
+          });
+          return;
+        }
+        console.error(`[Recordings] Failed to associate ${sessionId}:`, error);
+        res.status(500).json({
+          success: false,
+          error: "Could not associate recording.",
+        });
+      }
+    },
+  );
+
+  router.delete(
+    "/admin/recordings/:sessionId",
+    requireAdmin,
+    async (req, res) => {
+      const sessionId = req.params.sessionId;
+      if (
+        typeof sessionId !== "string" ||
+        !RECORDING_SESSION_ID_PATTERN.test(sessionId)
+      ) {
+        res.status(400).json({
+          success: false,
+          error: "Invalid recording session ID.",
+        });
+        return;
+      }
+
+      try {
+        const deleted = await databaseService.deleteRecording(sessionId);
+        if (!deleted) {
+          res
+            .status(404)
+            .json({ success: false, error: "Recording not found." });
+          return;
+        }
+        res.json({
+          success: true,
+          deleted: toFlatRecording(deleted),
+          previous: toFlatRecording(deleted),
+        });
+      } catch (error) {
+        console.error(`[Recordings] Failed to delete ${sessionId}:`, error);
+        res.status(500).json({
+          success: false,
+          error: "Could not delete recording.",
+        });
+      }
+    },
+  );
 
   router.get("/admin/recordings/:sessionId", requireAuth, async (req, res) => {
     const sessionId = req.params.sessionId;
